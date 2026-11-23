@@ -179,16 +179,9 @@ pub fn type_layout(
 pub struct MemberPlacer {
     block_align: Option<u32>,
     packing: Packing,
-    hlsl_offsets: bool,
     offset: u32,
     extent: u32,
     alignment: u32,
-}
-
-struct Placement {
-    alignment: u32,
-    size: u32,
-    vector_like: bool,
 }
 
 impl MemberPlacer {
@@ -196,16 +189,10 @@ impl MemberPlacer {
         Self {
             block_align: layout_value(block, LayoutId::Align),
             packing,
-            hlsl_offsets: false,
             offset: 0,
             extent: 0,
             alignment: 0,
         }
-    }
-
-    pub const fn with_hlsl_offsets(mut self, hlsl_offsets: bool) -> Self {
-        self.hlsl_offsets = hlsl_offsets;
-        self
     }
 
     pub fn place(
@@ -213,68 +200,21 @@ impl MemberPlacer {
         qualifiers: &Qualifiers,
         ty: &Type,
         layout: &TypeLayout,
-        row_major: bool,
     ) -> Option<u32> {
-        let placement = self.placement(ty, layout, row_major);
+        let vector_like = !ty.is_array() && matches!(ty.kind, TypeKind::Vector { .. });
         let mut offset = layout_value(qualifiers, LayoutId::Offset).unwrap_or(self.offset);
         let actual = match layout_value(qualifiers, LayoutId::Align).or(self.block_align) {
-            Some(align) => placement.alignment.max(align),
-            None => placement.alignment,
+            Some(align) => layout.alignment.max(align),
+            None => layout.alignment,
         };
         offset = round_up(offset, actual)?;
-        if self.packing != Packing::Scalar
-            && improper_straddle(placement.vector_like, placement.size, offset)
-        {
+        if self.packing != Packing::Scalar && improper_straddle(vector_like, layout.size, offset) {
             offset = round_up(offset, VEC4_ALIGNMENT)?;
         }
-        self.alignment = self.alignment.max(placement.alignment);
+        self.alignment = self.alignment.max(layout.alignment);
         self.extent = self.extent.max(offset.checked_add(layout.size)?);
-        self.offset = offset.checked_add(placement.size)?;
+        self.offset = offset.checked_add(layout.size)?;
         Some(offset)
-    }
-
-    fn placement(&self, ty: &Type, layout: &TypeLayout, row_major: bool) -> Placement {
-        let arrayed = ty.is_array();
-        let vector_like = !arrayed && matches!(ty.kind, TypeKind::Vector { .. });
-        let natural = Placement {
-            alignment: layout.alignment,
-            size: layout.size,
-            vector_like,
-        };
-        if !self.hlsl_offsets {
-            return natural;
-        }
-        let (component, length, matrix) = match ty.kind {
-            TypeKind::Scalar(scalar) => (scalar_size(scalar), 1, false),
-            TypeKind::Vector { scalar, size } => (scalar_size(scalar), u32::from(size), false),
-            TypeKind::Matrix {
-                scalar,
-                columns,
-                rows,
-            } => (
-                scalar_size(scalar),
-                u32::from(if row_major { columns } else { rows }),
-                true,
-            ),
-            _ => return natural,
-        };
-        let alignment = if vector_like && component <= 4 {
-            component
-        } else {
-            layout.alignment
-        };
-        let size = if self.packing == Packing::Std140 && (matrix || arrayed) {
-            layout
-                .size
-                .saturating_sub(component.saturating_mul(4_u32.saturating_sub(length)))
-        } else {
-            layout.size
-        };
-        Placement {
-            alignment,
-            size,
-            vector_like,
-        }
     }
 
     pub const fn end(&self) -> u32 {
@@ -319,7 +259,7 @@ pub fn block_layout(
     for member in members {
         let row_major = member_row_major(&member.qualifiers, row_major);
         let layout = layouter.ty(&member.ty, row_major)?;
-        let offset = placer.place(&member.qualifiers, &member.ty, &layout, row_major)?;
+        let offset = placer.place(&member.qualifiers, &member.ty, &layout)?;
         laid.push(MemberLayout { offset, layout });
     }
     Some(BlockLayout {

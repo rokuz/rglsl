@@ -495,180 +495,6 @@ fn shadow_sampling_keeps_lod_gradients_and_bias() -> crate::TestResult {
     Ok(())
 }
 
-/// Automatic bindings follow glslang's `--auto-map-bindings`: resources the
-/// shader uses get the lowest free binding of their set, the ones with an
-/// explicit `set` first; unused resources get binding 0.
-#[test]
-fn automatic_bindings_match_glslang() -> crate::TestResult {
-    let source = "#version 450
-        layout(binding = 1) uniform texture2D explicit1;
-        uniform texture2D unusedTex;
-        uniform U0 { vec4 a; } u0;
-        layout(set = 1) uniform U1 { vec4 a; } u1;
-        layout(set = 1, binding = 0) uniform texture2D t10;
-        buffer B { vec4 d[]; } b;
-        uniform U2 { vec4 a; } u2unused;
-        uniform sampler samp;
-        layout(binding = 3) uniform texture2D t3;
-        layout(set = 0) uniform USet { vec4 a; } uset;
-        uniform UL { vec4 a; } late;
-        layout(location = 0) in vec4 i0;
-        layout(location = 0) out vec4 o0;
-        vec4 helper() { return late.a; }
-        void main() {
-            o0 = texture(sampler2D(explicit1, samp), i0.xy) + u0.a + u1.a
-                + texture(sampler2D(t10, samp), i0.xy) + b.d[0] + helper()
-                + texture(sampler2D(t3, samp), i0.zw) + uset.a;
-        }";
-    let options = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Fragment)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
-    Validator::new(ValidationFlags::all()).validate(&module)?;
-
-    let mut bindings: Vec<(&str, u32, u32)> = module
-        .global_variables
-        .iter()
-        .filter_map(|(_, global)| {
-            let binding = global.binding.as_ref()?;
-            Some((global.name.as_deref()?, binding.group, binding.binding))
-        })
-        .collect();
-    bindings.sort_unstable();
-    // What `glslang -V --auto-map-bindings` assigns to this shader.
-    assert_eq!(
-        bindings,
-        [
-            ("b", 0, 4),
-            ("explicit1", 0, 1),
-            ("late", 0, 6),
-            ("samp", 0, 5),
-            ("t10", 1, 0),
-            ("t3", 0, 3),
-            ("u0", 0, 2),
-            ("u1", 1, 1),
-            ("u2unused", 0, 0),
-            ("unusedTex", 0, 0),
-            ("uset", 0, 0),
-        ]
-    );
-
-    // Without the option a missing binding is an error, as in glslang.
-    let error = parse(ShaderStage::Fragment, source)
-        .err()
-        .ok_or("expected an error")?;
-    assert!(error.contains("binding"), "{error}");
-    Ok(())
-}
-
-#[test]
-fn discarded_results_keep_their_resources_live() -> crate::TestResult {
-    let source = "#version 450
-        uniform textureBuffer tBuf;
-        uniform sampler s;
-        uniform samplerBuffer sBuf;
-        uniform utextureBuffer utBuf;
-        uniform itextureBuffer itBuf;
-        void main() {
-            texelFetch(samplerBuffer(tBuf, s), 13);
-            texelFetch(sBuf, 13);
-            texelFetch(tBuf, 13);
-            texelFetch(utBuf, 13);
-            texelFetch(itBuf, 13);
-        }";
-    let options = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Vertex)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
-    let mut bindings: Vec<(&str, u32)> = module
-        .global_variables
-        .iter()
-        .filter_map(|(_, global)| Some((global.name.as_deref()?, global.binding.as_ref()?.binding)))
-        .collect();
-    bindings.sort_unstable_by_key(|&(_, binding)| binding);
-    assert_eq!(
-        bindings,
-        [
-            ("tBuf", 0),
-            ("s", 1),
-            ("sBuf", 2),
-            ("utBuf", 3),
-            ("itBuf", 4)
-        ]
-    );
-    Ok(())
-}
-
-#[test]
-fn automatic_locations_skip_explicit_ones() -> crate::TestResult {
-    let source = "#version 450
-        in vec4 i0;
-        in mat3 i1;
-        layout(location = 1) in vec4 iexp;
-        in vec4 i2unused;
-        in vec3 i3[2];
-        in vec2 i5;
-        out vec4 o0;
-        layout(location = 0) out vec4 oexp;
-        out vec4 o1;
-        void main() {
-            o0 = i0 + vec4(i1[0], 0.0) + iexp + vec4(i3[1], 0.0) + vec4(i5, 0.0, 0.0);
-            oexp = o0;
-            o1 = o0;
-        }";
-    let options = glsl::Options {
-        auto_map_locations: true,
-        ..glsl::Options::from(ShaderStage::Fragment)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
-    Validator::new(ValidationFlags::all()).validate(&module)?;
-
-    let locations = |space| -> crate::TestResult<Vec<(&str, u32)>> {
-        let mut locations = module.entry_points[0]
-            .interface
-            .iter()
-            .map(|&handle| &module.global_variables[handle])
-            .filter(|global| global.space == space)
-            .map(|global| match global.io {
-                Some(rglsl::Binding::Location { location, .. }) => Ok((
-                    global
-                        .name
-                        .as_deref()
-                        .ok_or("an unnamed interface variable")?,
-                    location,
-                )),
-                ref other => Err(format!("not a location: {other:?}")),
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        locations.sort_unstable();
-        Ok(locations)
-    };
-    assert_eq!(
-        locations(rglsl::AddressSpace::Input)?,
-        [
-            ("i0", 0),
-            ("i1", 2),
-            ("i2unused", 5),
-            ("i3", 6),
-            ("i5", 8),
-            ("iexp", 1),
-        ]
-    );
-    assert_eq!(
-        locations(rglsl::AddressSpace::Output)?,
-        [("o0", 1), ("o1", 2), ("oexp", 0)]
-    );
-
-    // Without the option a missing location is an error, as in glslang.
-    let error = parse(ShaderStage::Fragment, source)
-        .err()
-        .ok_or("expected an error")?;
-    assert!(error.contains("location"), "{error}");
-    Ok(())
-}
-
 /// Vulkan has no default uniform block: only opaque types and blocks can be
 /// `uniform`.
 #[test]
@@ -1734,31 +1560,6 @@ fn interface_block_locations_follow_glslang() -> crate::TestResult {
             .ok_or("expected an error")?;
         assert!(error.contains(expected), "{error}");
     }
-
-    let options = glsl::Options {
-        auto_map_locations: true,
-        ..glsl::Options::from(ShaderStage::Vertex)
-    };
-    let module = glsl::Frontend::default().parse(
-        &options,
-        "#version 450
-            out A { layout(location = 7) vec4 a; layout(location = 8) vec4 b; } a;
-            out B { vec4 c; mat2 d; } b;
-            out vec4 e;
-            void main() { gl_Position = vec4(0.0); }",
-    )?;
-    let io: Vec<_> = module.entry_points[0]
-        .interface
-        .iter()
-        .map(|&handle| &module.global_variables[handle])
-        .filter_map(|global| match global.io {
-            Some(rglsl::Binding::Location { location, .. }) => {
-                Some((global.name.clone().unwrap_or_default(), location))
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(io, [("b".to_string(), 2), ("e".to_string(), 5)]);
     Ok(())
 }
 
@@ -2245,13 +2046,13 @@ fn variable_type(
 fn combined_samplers_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(binding = 1) uniform sampler2D explicit1;
-        uniform sampler2D unusedSampler;
-        uniform U0 { vec4 a; } u0;
-        uniform sampler2DShadow shadow;
-        layout(set = 1) uniform isampler2DArray layers[3];
-        uniform sampler samp;
-        uniform texture2D tex;
-        uniform sampler2DMS multi;
+        layout(binding = 6) uniform sampler2D unusedSampler;
+        layout(binding = 0) uniform U0 { vec4 a; } u0;
+        layout(binding = 2) uniform sampler2DShadow shadow;
+        layout(set = 1, binding = 0) uniform isampler2DArray layers[3];
+        layout(binding = 3) uniform sampler samp;
+        layout(binding = 4) uniform texture2D tex;
+        layout(binding = 5) uniform sampler2DMS multi;
         layout(location = 0) in vec4 i0;
         layout(location = 0) out vec4 o0;
         void main() {
@@ -2259,11 +2060,7 @@ fn combined_samplers_match_glslang() -> crate::TestResult {
                 + vec4(texelFetch(layers[1], ivec3(0), 0)) + texture(sampler2D(tex, samp), i0.xy)
                 + texelFetch(multi, ivec2(0), 1) + vec4(textureSize(explicit1, 0), 0.0, 0.0);
         }";
-    let options = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Fragment)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
+    let module = parse(ShaderStage::Fragment, source)?;
     let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let mut bindings: Vec<(&str, u32, u32)> = module
         .global_variables
@@ -2284,7 +2081,7 @@ fn combined_samplers_match_glslang() -> crate::TestResult {
             ("shadow", 0, 2),
             ("tex", 0, 4),
             ("u0", 0, 0),
-            ("unusedSampler", 0, 0),
+            ("unusedSampler", 0, 6),
         ]
     );
 
@@ -3464,10 +3261,10 @@ fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;
         struct S { vec4 x; float y[2]; };
-        uniform U { vec4 a; S s; } u[4];
-        layout(std430) buffer B { float f; vec4 r[]; } b[2];
-        layout(std430) buffer C { uint n; } c[];
-        uniform I { vec4 sized[]; vec4 one[]; } implicit;
+        layout(binding = 0) uniform U { vec4 a; S s; } u[4];
+        layout(std430, binding = 1) buffer B { float f; vec4 r[]; } b[2];
+        layout(std430, binding = 2) buffer C { uint n; } c[];
+        layout(binding = 3) uniform I { vec4 sized[]; vec4 one[]; } implicit;
         layout(push_constant) uniform P { int i; } pc;
         void main() {
             S t = u[pc.i].s;
@@ -3475,11 +3272,7 @@ fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
             b[0].f = float(b[1].r.length()) + u[pc.i].s.y[1];
             c[3].n = 1u;
         }";
-    let options = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Compute)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
+    let module = parse(ShaderStage::Compute, source)?;
     let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let words = spv::write_vec(
         &module,
@@ -10605,27 +10398,6 @@ void main() {}
 ";
 
 #[test]
-fn hlsl_offsets_pack_vectors_like_glslang() -> crate::TestResult {
-    let module = glsl::Frontend::default().parse(
-        &glsl::Options {
-            hlsl_offsets: true,
-            ..glsl::Options::from(ShaderStage::Vertex)
-        },
-        HLSL_OFFSETS,
-    )?;
-    Validator::new(ValidationFlags::all()).validate(&module)?;
-    let offsets: Vec<u32> = block_layout(&module, "block")?
-        .into_iter()
-        .map(|(offset, _)| offset)
-        .collect();
-    assert_eq!(
-        offsets,
-        [0, 4, 16, 20, 32, 48, 56, 64, 68, 76, 80, 88, 96, 112]
-    );
-    Ok(())
-}
-
-#[test]
 fn misaligned_explicit_offsets_are_rounded_up() -> crate::TestResult {
     let source = "#version 450
 layout(binding = 0) buffer block {
@@ -10842,11 +10614,6 @@ void main() {
 ";
     let options = glsl::Options::from(ShaderStage::Fragment);
     assert_eq!(first_error_line(source, &options)?, Some(2));
-    let automatic = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Fragment)
-    };
-    assert_eq!(first_error_line(source, &automatic)?, Some(5));
     let block = "#version 450
 layout(std140) uniform U { vec4 v; } u;
 void main() {}
@@ -11432,39 +11199,6 @@ void main() {
     assert!(ends_unreachable(&blocks), "{blocks:?}");
     assert_eq!(count_in(&blocks, Op::Store), 0);
     assert_eq!(count_in(&blocks, Op::Return), 0);
-    Ok(())
-}
-
-#[test]
-fn globals_used_only_in_dead_code_keep_their_bindings() -> crate::TestResult {
-    let source = "#version 450
-layout(location = 0) out vec4 o;
-layout(set = 0, binding = 0) uniform U { int s; };
-uniform sampler2D dead;
-uniform sampler2D live;
-void main() {
-    for (;;) {
-        if (s > 0) { o = texture(live, vec2(0.5)); return; }
-    }
-    o = texture(dead, vec2(0.5));
-}
-";
-    let options = glsl::Options {
-        auto_map_bindings: true,
-        ..glsl::Options::from(ShaderStage::Fragment)
-    };
-    let module = glsl::Frontend::default().parse(&options, source)?;
-    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
-    let options = spv::Options {
-        flags: spv::WriterFlags::DEBUG,
-        ..spv::Options::default()
-    };
-    let words = spv::write_vec(&module, &info, &options, None)?;
-    crate::stage_io::spirv_val(&words)?;
-    let module = dr::load_words(words)?;
-    assert!(variable_decorations(&module, "dead")?.contains(&(Decoration::Binding, vec![1])));
-    assert!(variable_decorations(&module, "live")?.contains(&(Decoration::Binding, vec![2])));
-    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
     Ok(())
 }
 
@@ -12430,40 +12164,6 @@ void main() { oa = a; }
     let caps_8 = capabilities_of(&access_8);
     assert!(caps_8.contains(&spirv::Capability::WorkgroupMemoryExplicitLayout8BitAccessKHR));
     assert!(!caps_8.contains(&spirv::Capability::Int8));
-
-    let mut export_options = glsl::Options::from(ShaderStage::Compute);
-    export_options.export_functions = true;
-    export_options.spirv_version = Some((1, 4));
-    let no_link_module = glsl::Frontend::default()
-        .compile(
-            &export_options,
-            "#version 450
-#extension GL_EXT_shared_memory_block : enable
-layout(local_size_x = 8) in;
-shared first { int a; } b1;
-shared second { int b; } b2;
-void notMain() { b1.a = 2; b2.b = 3; }
-",
-        )
-        .map_err(|e| format!("{e:?}"))?
-        .unit
-        .module;
-    let mut obj_validator = Validator::new(ValidationFlags::all());
-    obj_validator.mode(rglsl::valid::ValidationMode::Object);
-    let no_link_info = obj_validator.validate(&no_link_module)?;
-    let no_link_words = spv::write_vec(
-        &no_link_module,
-        &no_link_info,
-        &spv::Options {
-            lang_version: (1, 4),
-            flags: spv::WriterFlags::DEBUG,
-            ..spv::Options::default()
-        },
-        None,
-    )?;
-    crate::stage_io::spirv_val_in(&no_link_words, &["--target-env", "spv1.4"])?;
-    let no_link_dr = dr::load_words(no_link_words)?;
-    assert!(decorated(&no_link_dr, Decoration::Aliased).is_empty());
 
     let mut mix_options = glsl::Options::from(ShaderStage::Compute);
     mix_options.spirv_version = Some((1, 4));

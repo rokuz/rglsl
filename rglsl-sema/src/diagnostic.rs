@@ -152,6 +152,8 @@ pub enum DiagnosticKind {
     InvalidNullInitializer(&'static str),
     #[error("{0}")]
     BindingRequired(&'static str),
+    #[error("SPIR-V requires a location for user inputs and outputs")]
+    LocationRequired,
     #[error("an array size must be a constant integer expression")]
     ArraySizeNotConstant,
     #[error("`{0}`: unexpected type parameters")]

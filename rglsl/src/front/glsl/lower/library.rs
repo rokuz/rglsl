@@ -24,7 +24,6 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
         defines: options.defines.clone(),
         library: false,
         source_name: options.source_name.clone(),
-        binding_shifts: options.binding_shifts.clone(),
         preamble: options.preamble.clone(),
         builtin_tables: Arc::clone(&options.builtin_tables),
         ..*options
@@ -456,7 +455,7 @@ fn once(
         Some(reused) => reused,
         None => {
             let preprocessed = preprocess(options, Some(first), source, root, includer);
-            let (unit, failure) = super::parse_unit(options, preprocessed.text.as_str());
+            let (unit, failure) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
             (preprocessed, unit, failure.is_some())
         }
     };

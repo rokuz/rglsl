@@ -428,25 +428,7 @@ fn control_outputs_read_by_other_invocations_stay() -> TestResult {
 }
 
 #[test]
-fn the_pass_alone_needs_a_linked_program() -> TestResult {
-    let options = OptOptions {
-        passes: Some(LTO.iter().map(|&name| name.to_owned()).collect()),
-        validate_each: true,
-        ..OptOptions::default()
-    };
-    let unlinked = Context {
-        unlinked: true,
-        ..Context::default()
-    };
-    let stages = program_with(
-        &[
-            (ShaderStage::Vertex, VERTEX),
-            (ShaderStage::Fragment, FRAGMENT),
-        ],
-        &options,
-        unlinked,
-    )?;
-    assert_eq!(outputs(&stages, ShaderStage::Vertex)?, ["", "a", "b", "c"]);
+fn the_pass_alone_drops_outputs_the_next_stage_does_not_read() -> TestResult {
     let stages = program(
         &[
             (ShaderStage::Vertex, VERTEX),

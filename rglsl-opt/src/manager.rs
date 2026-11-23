@@ -57,7 +57,7 @@ fn execute(
     let mut run = Run {
         summaries: stages
             .iter()
-            .map(|stage| Summary::of(stage.module, context))
+            .map(|stage| Summary::of(stage.module))
             .collect(),
         changed: vec![false; stages.len()],
         settled: vec![Vec::new(); stages.len()],
@@ -132,13 +132,9 @@ fn plan<'t>(table: &'t [Pass], options: &OptOptions) -> Result<Vec<Planned<'t>>,
 
 const SPECIALIZE: &str = "specialize";
 
-fn validate(module: &Module, context: Context) -> Result<ModuleInfo, String> {
+fn validate(module: &Module) -> Result<ModuleInfo, String> {
     let mut validator = Validator::new(ValidationFlags::all());
-    validator.mode(if context.unlinked {
-        ValidationMode::Object
-    } else {
-        ValidationMode::Executable
-    });
+    validator.mode(ValidationMode::Executable);
     validator
         .validate(module)
         .map_err(|error| chain(error.as_inner()))
@@ -222,10 +218,10 @@ impl Run<'_, '_> {
             settled.clear();
         }
         if let Some(summary) = self.summaries.get_mut(index) {
-            *summary = Summary::of(stage.module, self.context);
+            *summary = Summary::of(stage.module);
         }
         if self.validate_each {
-            validate(stage.module, self.context).map_err(|message| OptError::InvalidIr {
+            validate(stage.module).map_err(|message| OptError::InvalidIr {
                 pass: pass.name,
                 stage: stage.stage,
                 message,
@@ -237,19 +233,19 @@ impl Run<'_, '_> {
     fn finish(self) -> Result<(), OptError> {
         for (stage, &changed) in self.stages.iter_mut().zip(&self.changed) {
             if changed {
-                finish_stage(stage, self.context)?;
+                finish_stage(stage)?;
             }
         }
         Ok(())
     }
 }
 
-fn finish_stage(stage: &mut StageModule<'_>, context: Context) -> Result<(), OptError> {
+fn finish_stage(stage: &mut StageModule<'_>) -> Result<(), OptError> {
     compact(stage.module, KeepUnused::Declarations).map_err(|error| OptError::Compact {
         stage: stage.stage,
         message: chain(&error),
     })?;
-    *stage.info = validate(stage.module, context).map_err(|message| OptError::Invalid {
+    *stage.info = validate(stage.module).map_err(|message| OptError::Invalid {
         stage: stage.stage,
         message,
     })?;

@@ -289,17 +289,9 @@ fn builds_programs_like_the_command_line() -> TestResult {
     let mut fragment =
         CompileOptions::new("shader.frag", ShaderStage::Fragment).target_vulkan(1, 2);
     fragment.entry_point = Some(String::from("shade"));
-    if let Some(base) = fragment
-        .binding_shifts
-        .base
-        .get_mut(rglsl_link::ResourceClass::CombinedSampler.index())
-    {
-        *base = 4;
-    }
     let vertex = CompileOptions::new("shader.vert", ShaderStage::Vertex).target_vulkan(1, 2);
     let processes = fragment.processes();
     assert!(processes.contains(&String::from("entry-point shade")));
-    assert!(processes.contains(&String::from("shift-combined-sampler-binding 4")));
     assert!(processes.contains(&String::from("target-env vulkan1.2")));
     let options = ProgramOptions {
         spirv_version: (1, 5),
@@ -324,7 +316,7 @@ fn builds_programs_like_the_command_line() -> TestResult {
     assert!(fragment.result.is_ok());
     let reflection = build.reflection.ok_or("no reflection")?;
     assert!(reflection.contains("image:"), "{reflection}");
-    assert!(reflection.contains("binding 5"), "{reflection}");
+    assert!(reflection.contains("binding 1"), "{reflection}");
     Ok(())
 }
 
@@ -447,111 +439,4 @@ fn validate_io_needs_an_output_for_every_input_read() {
         strict.link.to_string(),
         "ERROR: tinted.frag:6: Linking fragment and vertex stages: Preceding stage has no matching declaration for statically used input: tint"
     );
-}
-
-fn auto_sampled(source: &str) -> Result<rglsl_link::ObjectModule, rglsl_link::Diagnostics> {
-    let mut options = CompileOptions::new("separate.frag", ShaderStage::Fragment);
-    options.auto_sampled_textures = true;
-    compile(source, &options)
-}
-
-fn sampler_globals(object: &rglsl_link::ObjectModule) -> usize {
-    let module = &object.unit.module;
-    module
-        .global_variables
-        .iter()
-        .filter(|&(_, global)| {
-            let mut ty = global.ty;
-            while let rglsl::TypeInner::Array { base, .. } = module.types[ty].inner {
-                ty = base;
-            }
-            matches!(module.types[ty].inner, rglsl::TypeInner::Sampler { .. })
-        })
-        .count()
-}
-
-#[test]
-fn auto_sampled_textures_combine_arrays_through_user_functions() -> TestResult {
-    let object = auto_sampled(
-        "#version 450
-layout(set = 0, binding = 0) uniform texture2D textures[2];
-layout(set = 0, binding = 1) uniform sampler samplers[2];
-layout(set = 0, binding = 2) uniform sampler single;
-layout(location = 0) in vec2 uv;
-layout(location = 0) out vec4 color;
-vec4 inner(texture2D t, sampler s, vec2 p) { return texture(sampler2D(t, s), p); }
-vec4 outer(texture2D t, sampler s, vec2 p) {
-    return texture(sampler2D(t, s), p) + inner(t, (s), p);
-}
-void main() {
-    color = outer(textures[0], single, uv) + texture(sampler2D(textures[1], samplers[1]), uv);
-}
-",
-    )?;
-    assert_eq!(sampler_globals(&object), 0);
-    let module = &object.unit.module;
-    assert!(
-        module
-            .types
-            .iter()
-            .any(|(_, ty)| matches!(ty.inner, rglsl::TypeInner::SampledImage { .. }))
-    );
-    let program = link_spirv(&[object], &ProgramOptions::default())?;
-    assert_eq!(program.stages.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn auto_sampled_textures_follow_scopes() -> TestResult {
-    let object = auto_sampled(
-        "#version 450
-layout(set = 0, binding = 0) uniform texture2D image;
-layout(set = 0, binding = 1) uniform sampler s;
-layout(location = 0) out vec4 color;
-float scale(float s) { return s * 2.0; }
-vec4 fetch(texture2D image) { return texelFetch(image, ivec2(0), 0); }
-void main() {
-    float s = 0.25;
-    color = fetch(image) * scale(s) + vec4(scale((s)));
-}
-",
-    )?;
-    assert_eq!(sampler_globals(&object), 0);
-    let program = link_spirv(&[object], &ProgramOptions::default())?;
-    assert_eq!(program.stages.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn auto_sampled_textures_reject_what_cannot_be_rewritten() {
-    for (source, reason) in [
-        (
-            "#version 450
-layout(set = 0, binding = 0) uniform texture2D t;
-layout(set = 0, binding = 1) uniform sampler samplers[2];
-layout(location = 0) out vec4 color;
-vec4 f(texture2D t, sampler s) { return texture(sampler2D(t, s), vec2(0.5)); }
-void main() { color = f(t, samplers[1]); }
-",
-            "an element of a sampler array",
-        ),
-        (
-            "#version 450
-layout(set = 0, binding = 0) uniform texture2D t;
-layout(set = 0, binding = 1) uniform samplerShadow s;
-layout(location = 0) out vec4 color;
-void main() { color = vec4(texture(sampler2DShadow(t, s), vec3(0.5))); }
-",
-            "depth comparison",
-        ),
-    ] {
-        let Err(diagnostics) = auto_sampled(source) else {
-            panic!("the shader compiled");
-        };
-        let text = diagnostics.to_string();
-        assert!(
-            text.contains("auto-sampled textures is not supported: ") && text.contains(reason),
-            "{text}"
-        );
-    }
 }

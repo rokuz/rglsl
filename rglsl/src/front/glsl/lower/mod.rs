@@ -115,7 +115,7 @@ pub(super) fn analyze(
         return None;
     }
     let text = preprocessed.text.as_str();
-    let (unit, failure) = parse_unit(options, text);
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
     if failure.is_some() {
         return None;
     }
@@ -255,8 +255,8 @@ impl Parsed {
         includer: &mut dyn rglsl_pp::Includer,
     ) -> Self {
         let preprocessed = preprocess(options, stage, source, root, includer);
-        let unit =
-            (!preprocessed.has_errors()).then(|| parse_unit(options, preprocessed.text.as_str()));
+        let unit = (!preprocessed.has_errors())
+            .then(|| rglsl_ast::parse_prefix(preprocessed.text.as_str()));
         Self {
             stage,
             preprocessed,
@@ -534,10 +534,6 @@ fn lower_parsed(
             sema_error(map, text, source, diagnostic, reworded)
         })
         .collect::<Vec<_>>();
-    let mut errors = errors;
-    if options.export_functions {
-        errors.extend(exported_main(map, unit));
-    }
     let reported = analysis
         .diagnostics
         .iter()
@@ -566,31 +562,6 @@ fn lower_parsed(
     } else {
         Err(errors.into())
     }
-}
-
-fn exported_main(
-    map: &rglsl_pp::SourceMap,
-    unit: &TranslationUnit,
-) -> Option<(Error, Option<IncludeLocation>)> {
-    unit.external_declarations
-        .iter()
-        .find_map(|declaration| match *declaration {
-            ExternalDeclaration::FunctionDefinition(ref definition)
-                if definition.kind.prototype.node.name.node == "main" =>
-            {
-                let end = definition.kind.prototype.span.end.saturating_sub(1);
-                Some((
-                    Error {
-                        kind: ErrorKind::SemanticError(Cow::Borrowed(
-                            "main function cannot be exported",
-                        )),
-                        meta: original(map, rglsl_ast::Span::new(end, end)),
-                    },
-                    included(map, end),
-                ))
-            }
-            _ => None,
-        })
 }
 
 fn sema_error(
@@ -893,7 +864,8 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
     rglsl_sema::Options {
         spirv_version: options.spirv_version,
         end_of_input: u32::try_from(text.len()).ok(),
-        require_bindings: !options.auto_map_bindings,
+        require_bindings: true,
+        require_locations: true,
         limits: options.limits,
         ..rglsl_sema::Options::new(options.stage)
     }
@@ -910,64 +882,6 @@ fn only_version_errors(preprocessed: &rglsl_pp::Preprocessed) -> bool {
         })
 }
 
-pub(super) fn parse_unit(
-    options: &Options,
-    text: &str,
-) -> (TranslationUnit, Option<rglsl_ast::ParseError>) {
-    let (mut unit, failure) = rglsl_ast::parse_prefix(text);
-    if !options.auto_sampled_textures {
-        return (unit, failure);
-    }
-    match auto_sampled_textures(options, &mut unit, text) {
-        Ok(()) => (unit, failure),
-        Err(unsupported) => {
-            let error = rglsl_ast::ParseError::new(
-                rglsl_ast::ParseErrorKind::Unsupported {
-                    what: "auto-sampled textures",
-                    reason: unsupported.reason,
-                },
-                unsupported.span,
-                text,
-            );
-            (unit, failure.or(Some(error)))
-        }
-    }
-}
-
-fn auto_sampled_textures(
-    options: &Options,
-    unit: &mut TranslationUnit,
-    text: &str,
-) -> core::result::Result<(), rglsl_ast::sampled::Unsupported> {
-    rglsl_ast::sampled::upgrade_textures(unit)?;
-    let analysis = analyze_unit(options, unit, &sema_options(options, text));
-    let mut removed = BTreeSet::new();
-    for argument in rglsl_ast::sampled::call_arguments(unit) {
-        let Some(info) = analysis.expression(argument.id) else {
-            continue;
-        };
-        let rglsl_sema::types::TypeKind::Opaque(opaque) = info.ty.kind else {
-            continue;
-        };
-        if !matches!(opaque.kind, rglsl_sema::types::OpaqueKind::Sampler) {
-            continue;
-        }
-        let mut current = argument;
-        while let rglsl_ast::ast::ExpressionKind::Parenthesized(ref inner) = current.kind {
-            current = inner;
-        }
-        if !matches!(current.kind, rglsl_ast::ast::ExpressionKind::Variable(_)) {
-            return Err(rglsl_ast::sampled::Unsupported {
-                span: argument.span,
-                reason: "a sampler passed to a function must be a sampler variable, not an element of a sampler array or another expression, to be removed from the call",
-            });
-        }
-        removed.insert(argument.id);
-    }
-    rglsl_ast::sampled::remove_samplers(unit, &removed);
-    Ok(())
-}
-
 fn analyze_unit(options: &Options, unit: &TranslationUnit, sema: &rglsl_sema::Options) -> Analysis {
     rglsl_sema::analyze_with_tables(unit, sema, &*options.builtin_tables)
 }
@@ -981,7 +895,7 @@ fn semantic_errors_before(
     let map = &preprocessed.source_map;
     let text = preprocessed.text.as_str();
     class.identifiers(text);
-    let (unit, failure) = parse_unit(options, text);
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
     let analysis = analyze_unit(options, &unit, &sema_options(options, text));
     class.probe.narrow(analysis.stages);
     class.version.set(analysis.version);
@@ -1165,9 +1079,6 @@ pub(super) struct Lowerer<'a> {
     pub(super) member_indices: BTreeMap<(BlockId, u32), u32>,
     pub(super) invariant_all: bool,
     pub(super) invariant: Vec<(String, Span)>,
-    pub(super) unbound: Vec<(Handle<GlobalVariable>, Option<u32>)>,
-    pub(super) next_location: [u32; 2],
-    pub(super) explicit_locations: [Vec<(u32, u32)>; 2],
     pub(super) initializers: Vec<Initialization<'a>>,
     pub(super) uniform_defaults: BlockDefaults,
     pub(super) buffer_defaults: BlockDefaults,
@@ -1210,8 +1121,6 @@ pub(super) struct Lowerer<'a> {
     pub(super) object: bool,
     pub(super) library: bool,
     pub(super) deferred_bias: bool,
-    pub(super) automatic_locations: Vec<Handle<GlobalVariable>>,
-    pub(super) automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub(super) declared_local_size: [Option<u32>; 3],
     pub(super) debug: Option<DebugCollector>,
 }
@@ -1280,9 +1189,6 @@ impl<'a> Lowerer<'a> {
             member_indices: BTreeMap::new(),
             invariant_all: false,
             invariant: Vec::new(),
-            unbound: Vec::new(),
-            next_location: [0; 2],
-            explicit_locations: [Vec::new(), Vec::new()],
             initializers: Vec::new(),
             uniform_defaults: BlockDefaults::default(),
             buffer_defaults: BlockDefaults::default(),
@@ -1326,8 +1232,6 @@ impl<'a> Lowerer<'a> {
             object: mode != Mode::Program,
             library: mode == Mode::Library,
             deferred_bias: false,
-            automatic_locations: Vec::new(),
-            automatic_bindings: Vec::new(),
             declared_local_size: [None; 3],
             debug: options.debug_info.then(DebugCollector::default),
         }
@@ -1504,9 +1408,6 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.prepass(&definitions);
         self.report(result);
-        if self.options.auto_map_locations {
-            self.reserve_explicit_locations();
-        }
         let before_globals = self.errors.len();
         for declaration in &unit.external_declarations {
             if let ExternalDeclaration::Declaration(ref declaration) = *declaration {
@@ -1578,10 +1479,10 @@ impl<'a> Lowerer<'a> {
         }
         self.define_functions(&unreached);
         self.ast_calls = calls;
-        let optional_from = match (reaches_all, self.options.keep_uncalled) {
-            (_, true) => self.module.global_variables.len(),
-            (true, false) => declared_globals,
-            (false, false) => lowered_globals,
+        let optional_from = if reaches_all {
+            declared_globals
+        } else {
+            lowered_globals
         };
         self.on_use_globals = self
             .module
@@ -1609,14 +1510,6 @@ impl<'a> Lowerer<'a> {
             object: self.into_object(),
             debug,
         })
-    }
-
-    pub(super) fn reachable_functions(&self) -> impl Iterator<Item = &crate::Function> {
-        self.reachable
-            .iter()
-            .flatten()
-            .filter_map(|id| self.functions.get(id))
-            .filter_map(|&handle| self.module.functions.try_get(handle).ok())
     }
 
     fn declare_functions(

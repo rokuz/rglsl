@@ -171,27 +171,6 @@ fn dce_removes_unused_inputs_and_resources_and_keeps_outputs() -> TestResult {
 }
 
 #[test]
-fn dce_keeps_the_interface_of_an_unlinked_module() -> TestResult {
-    let module = optimized(
-        ShaderStage::Fragment,
-        INTERFACE,
-        &["dce"],
-        TargetGpu::default(),
-        Context {
-            unlinked: true,
-            ..Context::default()
-        },
-    )?;
-    let names = globals(&module);
-    for kept in ["unused", "unused_texture", "unused_push"] {
-        assert!(names.iter().any(|name| name == kept), "{kept}: {names:?}");
-    }
-    let entry = module.entry_points.first().ok_or("no entry point")?;
-    assert!(entry.function.local_variables.is_empty());
-    Ok(())
-}
-
-#[test]
 fn dce_keeps_debug_variables_only_for_their_debug_values() -> TestResult {
     let module = optimized(
         ShaderStage::Fragment,
@@ -200,7 +179,6 @@ fn dce_keeps_debug_variables_only_for_their_debug_values() -> TestResult {
         TargetGpu::default(),
         Context {
             debug: DebugLevel::Variables,
-            ..Context::default()
         },
     )?;
     let entry = module.entry_points.first().ok_or("no entry point")?;

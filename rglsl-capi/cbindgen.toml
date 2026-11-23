@@ -23,6 +23,5 @@ no_includes = true
 "DebugInfo" = "rglsl_debug_info"
 "Disassembly" = "rglsl_disassembly"
 "Limits" = "rglsl_limits"
-"Resource" = "rglsl_resource"
 "OptLevel" = "rglsl_opt_level"
 "TargetGpu" = "rglsl_target_gpu"

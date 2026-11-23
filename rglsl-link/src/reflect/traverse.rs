@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use rglsl::front::glsl::Analyzed;
-use rglsl::{AddressSpace, Module, TypeInner};
 use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
@@ -53,10 +52,7 @@ pub(super) struct UnitCx<'p, 'd, 'a> {
     pub(super) source: &'a Analyzed,
     pub(super) analysis: &'a Analysis,
     pub(super) layouts: Layouts<'a>,
-    pub(super) module: Option<&'a Module>,
     pub(super) defaults: BTreeMap<rglsl_sema::types::BlockId, BlockDefaults>,
-    pub(super) heap_bindings: &'p BTreeMap<(usize, SymbolId), i64>,
-    pub(super) used: &'p BTreeSet<(usize, SymbolId)>,
     pub(super) processed: &'p RefCell<BTreeSet<(usize, Key)>>,
     pub(super) stage: usize,
     pub(super) update_stage_masks: Cell<bool>,
@@ -93,18 +89,8 @@ impl UnitCx<'_, '_, '_> {
         let Some(variable) = self.analysis.symbol(symbol).and_then(|s| s.variable()) else {
             return;
         };
-        let options = self.options();
         let storage = variable.qualifiers.storage;
-        if (storage == Storage::Uniform && options.shared_std140_ubo)
-            || (storage == Storage::Buffer && options.shared_std140_ssbo)
-        {
-            let ty = self.symbol_type(symbol);
-            if ty.as_ref().is_some_and(|ty| {
-                ty.is_block() && matches!(ty.packing, Pack::Std140 | Pack::Shared)
-            }) {
-                self.event(Event::Symbol(symbol, key));
-            }
-        } else if options.all_io_variables && matches!(storage, Storage::In | Storage::Out) {
+        if self.options().all_io_variables && matches!(storage, Storage::In | Storage::Out) {
             self.event(Event::Symbol(symbol, key));
         }
     }
@@ -222,66 +208,17 @@ impl UnitCx<'_, '_, '_> {
             self.block_layout(&mut ty, block);
         }
         if matches!(ty.storage, Storage::Uniform | Storage::Buffer) {
-            ty.binding = self
-                .heap_bindings
-                .get(&(self.unit, symbol))
-                .copied()
-                .or_else(|| self.binding(symbol, &found.name, block, &variable.qualifiers));
+            ty.binding = Self::binding(block, &variable.qualifiers);
         }
         Some(ty)
     }
 
     pub(super) fn binding(
-        &self,
-        symbol: SymbolId,
-        name: &str,
         block: Option<&rglsl_sema::types::BlockType>,
         qualifiers: &rglsl_sema::scope::Qualifiers,
     ) -> Option<i64> {
-        let explicit = layout_value(qualifiers, LayoutId::Binding)
-            .or_else(|| block.and_then(|block| layout_value(&block.qualifiers, LayoutId::Binding)));
-        if !self.program.settings.spirv {
-            return explicit;
-        }
-        if explicit.is_none() && !self.used.contains(&(self.unit, symbol)) {
-            return None;
-        }
-        let Some(module) = self.module else {
-            return explicit;
-        };
-        let found = module
-            .global_variables
-            .iter()
-            .find(|&(_, global)| match block {
-                Some(block) => {
-                    let mut ty = global.ty;
-                    if let Some(TypeInner::BindingArray { base, .. }) =
-                        module.types.get_handle(ty).ok().map(|ty| &ty.inner)
-                    {
-                        ty = *base;
-                    }
-                    matches!(
-                        global.space,
-                        AddressSpace::Uniform | AddressSpace::Storage { .. }
-                    ) && module
-                        .types
-                        .get_handle(ty)
-                        .ok()
-                        .and_then(|ty| ty.name.as_deref())
-                        == Some(block.name.as_str())
-                }
-                None => {
-                    global.space == AddressSpace::Handle && global.name.as_deref() == Some(name)
-                }
-            });
-        match found {
-            Some((_, global)) => global
-                .binding
-                .as_ref()
-                .map(|binding| i64::from(binding.binding))
-                .or(explicit),
-            None => explicit,
-        }
+        layout_value(qualifiers, LayoutId::Binding)
+            .or_else(|| block.and_then(|block| layout_value(&block.qualifiers, LayoutId::Binding)))
     }
 
     pub(super) fn chain(&self, top: Key) -> Option<(SymbolId, Key, Vec<Step>)> {
@@ -429,25 +366,11 @@ impl UnitCx<'_, '_, '_> {
         let Some(variable) = self.analysis.symbol(symbol).and_then(|s| s.variable()) else {
             return;
         };
-        let options = self.options();
         let storage = variable.qualifiers.storage;
         let Some(ty) = self.symbol_type(symbol) else {
             return;
         };
-        if storage == Storage::Uniform {
-            if ty.is_block() {
-                if options.shared_std140_ubo {
-                    self.add_uniform(symbol, key);
-                }
-            } else {
-                self.add_uniform(symbol, key);
-            }
-        }
-        if options.shared_std140_ssbo
-            && storage == Storage::Buffer
-            && ty.is_block()
-            && matches!(ty.packing, Pack::Std140 | Pack::Shared)
-        {
+        if storage == Storage::Uniform && !ty.is_block() {
             self.add_uniform(symbol, key);
         }
         let program = self.program;

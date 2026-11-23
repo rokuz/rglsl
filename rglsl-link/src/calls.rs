@@ -119,7 +119,6 @@ pub(crate) fn order(
     objects: &[ObjectModule],
     main: usize,
     table: &SymbolTable,
-    keep_uncalled: bool,
     errors: &mut Vec<LinkError>,
 ) -> Vec<Node> {
     let Some(entry) = objects
@@ -185,29 +184,7 @@ pub(crate) fn order(
     let mut callees_of: BTreeMap<Node, Vec<Node>> = BTreeMap::new();
     let mut stack: Vec<Frame> = Vec::new();
     let mut roots = edges(main, None, &entry.function.body);
-    if keep_uncalled {
-        let mut uncalled: Vec<Result<Node, String>> = objects
-            .iter()
-            .enumerate()
-            .flat_map(|(index, object)| {
-                object
-                    .unit
-                    .functions
-                    .iter()
-                    .map(move |symbol| (index, symbol))
-            })
-            .filter(|&(index, symbol)| {
-                table.definitions.get(&symbol.signature) == Some(&(index, symbol.function))
-            })
-            .map(|(index, symbol)| Ok((index, symbol.function)))
-            .collect();
-        uncalled.reverse();
-        roots.reverse();
-        uncalled.extend(roots);
-        roots = uncalled;
-    } else {
-        roots.reverse();
-    }
+    roots.reverse();
     stack.push((None, roots));
     while let Some(&mut (current, ref mut pending)) = stack.last_mut() {
         match pending.pop() {

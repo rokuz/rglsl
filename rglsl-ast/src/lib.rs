@@ -35,7 +35,6 @@ mod lexer;
 pub mod opaque;
 mod parser;
 mod printer;
-pub mod sampled;
 pub mod scalar;
 mod span;
 mod walk;

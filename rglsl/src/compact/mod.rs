@@ -36,24 +36,6 @@ impl From<KeepUnused> for bool {
     }
 }
 
-/// Returns the global variables that code reachable from an entry point
-/// refers to.
-///
-/// Unlike [`compact`], this neither changes `module` nor needs it to be valid,
-/// so a frontend can use it while it is still building the module.
-pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::GlobalVariable> {
-    let mut tracer = ModuleTracer::new(module);
-    for entry_point in &module.entry_points {
-        tracer.as_function(&entry_point.function).trace();
-    }
-    // Callees precede their callers, so tracing the last pending function
-    // first visits every reachable function exactly once.
-    while let Some(handle) = tracer.functions_pending.pop() {
-        tracer.as_function(&module.functions[handle]).trace();
-    }
-    tracer.global_variables_used
-}
-
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CompactError {
     #[error("Compaction found a handle it did not trace: {0}")]

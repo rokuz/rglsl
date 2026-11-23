@@ -71,13 +71,6 @@ Options:
   -x          save binary output as text-based 32-bit hexadecimal numbers
   -dumpfullversion | -dumpversion   print the bare version
   --absolute-path                   prints absolute path for messages
-  --auto-map-binding | --auto-map-bindings | --amb
-                                    automatically bind uniform variables without
-                                    explicit bindings
-  --auto-map-locations | --aml      automatically locate input/output lacking
-                                    'location'
-  --auto-sampled-textures           removes sampler variables and converts
-                                    existing textures to sampled textures
   --client vulkan100                see -V
   --depfile <file>                  writes depfile for build systems
   --discard-is-terminate            map GLSL discard to OpTerminateInvocation
@@ -87,14 +80,9 @@ Options:
                                     the first error of each compilation
   --error-column                    display the column of the error along the
                                     line
-  --hlsl-offsets                    allow block offsets to follow HLSL rules
   --invert-y | --iy                 invert position.Y output in the vertex,
                                     geometry and tessellation evaluation stages
-  --keep-uncalled | --ku            don't eliminate uncalled functions
   --nan-clamp                       favor non-NaN operand in min, max, and clamp
-  --no-link                         only compile shader; do not link (each
-                                    file is written on its own, its functions
-                                    exported)
   --quiet                           do not print the names of the compiled files
   --reflect-all-block-variables     reflect all variables in blocks, whether
                                     inactive or active
@@ -105,36 +93,10 @@ Options:
                                     shaders rather than just vertex/fragment
   --reflect-separate-buffers        reflect buffer variables and blocks
                                     separately to uniforms
-  --reflect-shared-std140-ssbo      reflect std140 and shared buffer blocks
-                                    whether used or not
-  --reflect-shared-std140-ubo       reflect std140 and shared uniform blocks
-                                    whether used or not
   --reflect-strict-array-suffix     use strict array suffix rules when
                                     reflecting
   --reflect-unwrap-io-blocks        unwrap input/output blocks the same as
                                     uniform blocks
-  --resource-set-binding [stage] <set>
-                                    set descriptor set for all resources
-  --resource-set-bindings | --rsb   synonyms for --resource-set-binding
-  --shift-image-binding [stage] <num>
-  --shift-image-binding [stage] <num> <set>...
-                                    base binding number for images, for all sets
-                                    or per descriptor set
-  --shift-image-bindings | --sib    synonyms for --shift-image-binding
-  --shift-sampler-binding [stage] <num> [<set>]...
-  --shift-sampler-bindings | --ssb  base binding number for samplers
-  --shift-ssbo-binding [stage] <num> [<set>]...
-  --shift-ssbo-bindings | --sbb     base binding number for SSBOs
-  --shift-texture-binding [stage] <num> [<set>]...
-  --shift-texture-bindings | --stb  base binding number for textures
-  --shift-ubo-binding [stage] <num> [<set>]...
-  --shift-ubo-bindings | --sub      base binding number for UBOs
-  --shift-combined-sampler-binding [stage] <num> [<set>]...
-  --shift-combined-sampler-bindings | --scsb
-                                    base binding number for combined samplers
-  --shift-as-binding [stage] <num> [<set>]...
-  --shift-as-bindings | --sab       base binding number for acceleration
-                                    structures
   --spirv-dis                       output standard-form disassembly; works
                                     only when a SPIR-V generation option is
                                     also used; -H then prints this form too

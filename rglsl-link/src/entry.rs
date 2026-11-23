@@ -1,17 +1,14 @@
-use rglsl::object::{BindingAssignment, PathStep};
-use rglsl::{Binding, EntryPoint, Expression, Function, GlobalVariable, Handle, Type};
+use rglsl::object::PathStep;
+use rglsl::{EntryPoint, Expression, Function, GlobalVariable, Handle};
 
 use crate::calls::{Node, SymbolTable, callees};
 use crate::error::{LinkError, internal};
-use crate::interface::relocate;
 use crate::merge::{Builder, MergedGlobal};
 use crate::unify::{Implicit, Mismatch, common_paths, same_expression, unify};
 
 pub(crate) struct Candidate<'c> {
     pub global: &'c GlobalVariable,
     pub implicit: &'c [Vec<PathStep>],
-    pub automatic_location: bool,
-    pub binding: BindingAssignment,
     pub instance: Option<String>,
     pub initializer: Option<Handle<Expression>>,
 }
@@ -50,18 +47,13 @@ impl Builder {
             self.errors.push(mismatch("storage qualifiers"));
             return;
         }
-        let automatic = existing.binding.is_automatic() || candidate.binding.is_automatic();
-        if current.binding != binding && !automatic {
+        if current.binding != binding {
             self.errors.push(mismatch("layout binding qualifiers"));
         }
         if current.memory_decorations != memory_decorations {
             self.errors.push(mismatch("memory qualifiers"));
         }
-        if !same_io(
-            current.io.as_ref(),
-            io.as_ref(),
-            existing.automatic_location || candidate.automatic_location,
-        ) {
+        if current.io.as_ref() != io.as_ref() {
             self.errors
                 .push(mismatch("layout location and interpolation qualifiers"));
         }
@@ -94,10 +86,9 @@ impl Builder {
             b: candidate.implicit,
         };
         let uniform_block = current.space == rglsl::AddressSpace::Uniform;
-        let (current_ty, ty) = self.align_locations(existing, candidate, &current, ty);
         match unify(
             &mut self.module,
-            current_ty,
+            current.ty,
             ty,
             &implicit,
             uniform_block,
@@ -105,19 +96,8 @@ impl Builder {
         ) {
             Ok(unified) => {
                 self.module.global_variables.get_mut(existing.handle).ty = unified;
-                if existing.binding.is_automatic() && !candidate.binding.is_automatic() {
-                    self.module
-                        .global_variables
-                        .get_mut(existing.handle)
-                        .binding = binding;
-                }
                 if let Some(merged) = self.globals.get_mut(position) {
                     merged.implicit = common_paths(&existing.implicit, candidate.implicit);
-                    merged.automatic_location =
-                        existing.automatic_location && candidate.automatic_location;
-                    if !candidate.binding.is_automatic() {
-                        merged.binding = BindingAssignment::Explicit;
-                    }
                 }
             }
             Err(Mismatch::ImplicitSize) => self.errors.push(LinkError::ImplicitSize(name.clone())),
@@ -130,40 +110,6 @@ impl Builder {
                     "Matched shader interfaces are using different instance names: block `{name}`"
                 ));
             }
-        }
-    }
-
-    fn align_locations(
-        &mut self,
-        existing: &MergedGlobal,
-        candidate: &Candidate,
-        current: &GlobalVariable,
-        ty: Handle<Type>,
-    ) -> (Handle<Type>, Handle<Type>) {
-        let (
-            Some(&Binding::Location { location: here, .. }),
-            Some(&Binding::Location {
-                location: there, ..
-            }),
-        ) = (current.io.as_ref(), candidate.global.io.as_ref())
-        else {
-            return (current.ty, ty);
-        };
-        if existing.automatic_location && !candidate.automatic_location {
-            let relocated = relocate(&mut self.module, current.ty, here, there);
-            let global = self.module.global_variables.get_mut(existing.handle);
-            global.ty = relocated;
-            if let Some(Binding::Location {
-                ref mut location, ..
-            }) = global.io
-            {
-                *location = there;
-            }
-            (relocated, ty)
-        } else if existing.automatic_location || candidate.automatic_location {
-            (current.ty, relocate(&mut self.module, ty, there, here))
-        } else {
-            (current.ty, ty)
         }
     }
 
@@ -493,44 +439,6 @@ fn same_optional(
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => same_expression(module, a, b),
-        _ => false,
-    }
-}
-
-fn without_location(binding: &Binding) -> Binding {
-    match *binding {
-        Binding::Location {
-            location: _,
-            interpolation,
-            sampling,
-            blend_src,
-            per_primitive,
-            component,
-            invariant,
-            patch,
-            per_view,
-            passthrough,
-        } => Binding::Location {
-            location: 0,
-            interpolation,
-            sampling,
-            blend_src,
-            per_primitive,
-            component,
-            invariant,
-            patch,
-            per_view,
-            passthrough,
-        },
-        Binding::BuiltIn(builtin) => Binding::BuiltIn(builtin),
-    }
-}
-
-fn same_io(a: Option<&Binding>, b: Option<&Binding>, automatic: bool) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(a), Some(b)) if automatic => without_location(a) == without_location(b),
-        (Some(a), Some(b)) => a == b,
         _ => false,
     }
 }

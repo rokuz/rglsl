@@ -802,6 +802,30 @@ impl Analyzer<'_> {
         }
     }
 
+    fn location_required_check(
+        &mut self,
+        span: Span,
+        name: &str,
+        qualifiers: &Qualifiers,
+        first_member: Option<&Member>,
+    ) {
+        if !self.options.require_locations
+            || !matches!(qualifiers.storage, Storage::In | Storage::Out)
+            || qualifiers.has_layout(LayoutId::Location)
+            || name.starts_with("gl_")
+            || qualifiers.flags.contains(QualifierFlags::PER_TASK)
+            || !qualifiers.spirv_decorations.is_empty()
+        {
+            return;
+        }
+        if first_member.is_some_and(|member| {
+            member.qualifiers.has_layout(LayoutId::Location) || member.name.starts_with("gl_")
+        }) {
+            return;
+        }
+        self.error(span, DiagnosticKind::LocationRequired);
+    }
+
     fn builtin_array_limit_check(&mut self, span: Span, name: &str, ty: &Type) {
         let Some(limit) = variables::array_limit(name).filter(|limit| limit.declared) else {
             return;
@@ -1771,6 +1795,7 @@ impl Analyzer<'_> {
         }
         if is_global {
             self.binding_required_check(name.span, &ty, &qualifiers, false);
+            self.location_required_check(name.span, &name.node, &qualifiers, None);
         }
         if is_global {
             self.heap_object_check(name.span, &qualifiers);
@@ -2535,6 +2560,14 @@ impl Analyzer<'_> {
             } else {
                 used.push(storage);
             }
+        }
+        if let Some(first) = members.first() {
+            self.location_required_check(
+                structure.name.span,
+                &structure.name.node,
+                &qualifiers,
+                Some(first),
+            );
         }
         let member_names: Vec<String> = members.iter().map(|member| member.name.clone()).collect();
         let block = match reference {

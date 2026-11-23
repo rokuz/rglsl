@@ -193,11 +193,7 @@ fn convert_snapshots_glsl() -> TestResult {
         };
 
         let source = input.read_source(DIR_IN, true)?;
-        let options = rglsl::front::glsl::Options {
-            // Many of these inputs leave out locations.
-            auto_map_locations: true,
-            ..rglsl::front::glsl::Options::from(stage)
-        };
+        let options = rglsl::front::glsl::Options::from(stage);
         let result = rglsl::front::glsl::Frontend::default().parse(&options, &source);
         if let Some(expected) = input.read_parameters(DIR_IN)?.expected_error {
             let Err(errors) = result else {

@@ -305,31 +305,6 @@ void main() {
 }
 
 #[test]
-fn a_private_global_of_an_unlinked_module_stays_global() -> TestResult {
-    let source = "#version 450
-layout(location = 0) in vec4 inColor;
-layout(location = 0) out vec4 color;
-vec4 scratch;
-void main() {
-    scratch = inColor;
-    color = scratch;
-}
-";
-    let module = optimized(
-        ShaderStage::Fragment,
-        source,
-        CLEAN,
-        TargetGpu::default(),
-        Context {
-            unlinked: true,
-            ..Context::default()
-        },
-    )?;
-    assert_eq!(private_globals(&module), ["scratch"]);
-    Ok(())
-}
-
-#[test]
 fn forwarded_values_keep_their_non_uniform_decoration() -> TestResult {
     let source = "#version 450
 #extension GL_EXT_nonuniform_qualifier : enable
@@ -431,7 +406,6 @@ void main() {
         TargetGpu::default(),
         Context {
             debug: DebugLevel::Variables,
-            ..Context::default()
         },
     )?;
     let function = entry(&module)?;

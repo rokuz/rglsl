@@ -49,8 +49,6 @@ fn run(test: &Path) -> TestResult<(bool, Vec<String>)> {
         let source = fs::read_to_string(&path)?;
         let extension = name.rsplit_once('.').map_or("", |(_, extension)| extension);
         let options = Options {
-            auto_map_locations: true,
-            auto_map_bindings: true,
             spirv_version: spirv,
             library: extension == "glsl",
             ..Options::from(stage(extension).unwrap_or(ShaderStage::Compute))
@@ -68,12 +66,7 @@ fn run(test: &Path) -> TestResult<(bool, Vec<String>)> {
     if !messages.is_empty() {
         return Ok((false, messages));
     }
-    let options = rglsl_link::Options {
-        auto_map_locations: true,
-        auto_map_bindings: true,
-        ..Default::default()
-    };
-    match rglsl_link::link_objects(&objects, &options) {
+    match rglsl_link::link_objects(&objects, &rglsl_link::Options::default()) {
         Ok(stages) => {
             for linked in stages {
                 rglsl::back::spv::write_vec(

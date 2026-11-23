@@ -4,8 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
 use rglsl_link::{
-    IncludeKind, IncludeRequest, ObjectModule, ResolvedInclude, ResourceClass, ResourceLimits,
-    ShaderStage,
+    IncludeKind, IncludeRequest, ObjectModule, ResolvedInclude, ResourceLimits, ShaderStage,
 };
 
 use crate::ffi::Includer;
@@ -188,42 +187,6 @@ impl TargetGpu {
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Resource(u32);
-
-pub const RGLSL_RESOURCE_SAMPLER: Resource = Resource(0);
-pub const RGLSL_RESOURCE_TEXTURE: Resource = Resource(1);
-pub const RGLSL_RESOURCE_IMAGE: Resource = Resource(2);
-pub const RGLSL_RESOURCE_UNIFORM_BUFFER: Resource = Resource(3);
-pub const RGLSL_RESOURCE_STORAGE_BUFFER: Resource = Resource(4);
-pub const RGLSL_RESOURCE_COMBINED_SAMPLER: Resource = Resource(5);
-pub const RGLSL_RESOURCE_ACCELERATION_STRUCTURE: Resource = Resource(6);
-
-impl Resource {
-    pub const fn from_raw(value: u32) -> Self {
-        Self(value)
-    }
-
-    fn class(self) -> Result<ResourceClass, Failure> {
-        Ok(match self {
-            RGLSL_RESOURCE_SAMPLER => ResourceClass::Sampler,
-            RGLSL_RESOURCE_TEXTURE => ResourceClass::Texture,
-            RGLSL_RESOURCE_IMAGE => ResourceClass::Image,
-            RGLSL_RESOURCE_UNIFORM_BUFFER => ResourceClass::UniformBuffer,
-            RGLSL_RESOURCE_STORAGE_BUFFER => ResourceClass::StorageBuffer,
-            RGLSL_RESOURCE_COMBINED_SAMPLER => ResourceClass::CombinedSampler,
-            RGLSL_RESOURCE_ACCELERATION_STRUCTURE => ResourceClass::AccelerationStructure,
-            _ => {
-                return Err(Failure::argument(format!(
-                    "{} is not a resource class",
-                    self.0
-                )));
-            }
-        })
-    }
-}
-
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Disassembly(u32);
 
 pub const RGLSL_DISASSEMBLY_GLSLANG: Disassembly = Disassembly(0);
@@ -257,10 +220,8 @@ pub const RGLSL_REFLECT_SEPARATE_BUFFERS: u32 = 1 << 3;
 pub const RGLSL_REFLECT_ALL_BLOCK_VARIABLES: u32 = 1 << 4;
 pub const RGLSL_REFLECT_UNWRAP_IO_BLOCKS: u32 = 1 << 5;
 pub const RGLSL_REFLECT_ALL_IO_VARIABLES: u32 = 1 << 6;
-pub const RGLSL_REFLECT_SHARED_STD140_UBO: u32 = 1 << 7;
-pub const RGLSL_REFLECT_SHARED_STD140_SSBO: u32 = 1 << 8;
 
-pub const RGLSL_ABI_VERSION: u32 = 2;
+pub const RGLSL_ABI_VERSION: u32 = 3;
 
 pub(crate) const VERSION: &CStr =
     match CStr::from_bytes_with_nul(concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes()) {
@@ -536,28 +497,6 @@ fn vulkan_version(major: u32, minor: u32) -> Result<(u8, u8), Failure> {
     version(major, minor, "Vulkan", 4)
 }
 
-fn set_shift(
-    shifts: &mut rglsl_link::BindingShifts,
-    class: Resource,
-    set: Option<u32>,
-    base: u32,
-) -> Result<(), Failure> {
-    let index = class.class()?.index();
-    match set {
-        None => {
-            if let Some(slot) = shifts.base.get_mut(index) {
-                *slot = base;
-            }
-        }
-        Some(set) => {
-            if let Some(per_set) = shifts.per_set.get_mut(index) {
-                per_set.insert(set, base);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn reflection_options(flags: u32) -> rglsl_link::reflect::Options {
     let has = |flag: u32| flags & flag != 0;
     rglsl_link::reflect::Options {
@@ -568,8 +507,6 @@ fn reflection_options(flags: u32) -> rglsl_link::reflect::Options {
         all_block_variables: has(RGLSL_REFLECT_ALL_BLOCK_VARIABLES),
         unwrap_io_blocks: has(RGLSL_REFLECT_UNWRAP_IO_BLOCKS),
         all_io_variables: has(RGLSL_REFLECT_ALL_IO_VARIABLES),
-        shared_std140_ubo: has(RGLSL_REFLECT_SHARED_STD140_UBO),
-        shared_std140_ssbo: has(RGLSL_REFLECT_SHARED_STD140_SSBO),
     }
 }
 
@@ -666,17 +603,6 @@ pub(crate) fn compile_options_add_include_dir(
     })
 }
 
-pub(crate) fn compile_options_add_resource_set_binding(
-    options: Option<&mut CompileOptions>,
-    value: Option<&CStr>,
-) -> ResultCode {
-    compile_options_change(options, |options| {
-        let value = text(value, "value")?.to_owned();
-        options.resource_set_binding.push(value);
-        Ok(())
-    })
-}
-
 pub(crate) fn compile_options_set_entry_point(
     options: Option<&mut CompileOptions>,
     name: Option<&CStr>,
@@ -726,17 +652,6 @@ pub(crate) fn compile_options_set_vulkan_version(
     compile_options_change(options, |options| {
         options.vulkan_version = vulkan_version(major, minor)?;
         Ok(())
-    })
-}
-
-pub(crate) fn compile_options_set_binding_shift(
-    options: Option<&mut CompileOptions>,
-    class: Resource,
-    set: Option<u32>,
-    base: u32,
-) -> ResultCode {
-    compile_options_change(options, |options| {
-        set_shift(&mut options.binding_shifts, class, set, base)
     })
 }
 
@@ -1122,36 +1037,6 @@ pub(crate) fn program_options_set_spirv_version(
     program_options_change(options, |options| {
         options.spirv_version = spirv_version(major, minor)?;
         Ok(())
-    })
-}
-
-pub(crate) fn program_options_set_binding_shift(
-    options: Option<&mut ProgramOptions>,
-    stage: Stage,
-    class: Resource,
-    set: Option<u32>,
-    base: u32,
-) -> ResultCode {
-    program_options_change(options, |options| {
-        let stage = stage.shader_stage()?;
-        let index = match options
-            .binding_shifts
-            .iter()
-            .position(|&(candidate, _)| candidate == stage)
-        {
-            Some(index) => index,
-            None => {
-                options
-                    .binding_shifts
-                    .push((stage, rglsl_link::BindingShifts::default()));
-                options.binding_shifts.len() - 1
-            }
-        };
-        let (_, shifts) = options
-            .binding_shifts
-            .get_mut(index)
-            .ok_or_else(Failure::internal)?;
-        set_shift(shifts, class, set, base)
     })
 }
 

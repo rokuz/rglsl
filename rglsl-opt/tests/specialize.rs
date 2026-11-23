@@ -259,23 +259,6 @@ void main() {
 }
 
 #[test]
-fn stages_compiled_alone_ignore_the_ids_of_other_stages() -> TestResult {
-    let options = OptOptions {
-        validate_each: true,
-        specialization: Vec::from([Specialization::new(2, "6"), Specialization::new(40, "1")]),
-        ..OptOptions::default()
-    };
-    let unlinked = Context {
-        unlinked: true,
-        ..Context::default()
-    };
-    let stages = program_with(&[(ShaderStage::Fragment, FRAGMENT)], &options, unlinked)?;
-    let stage = stages.first().ok_or("no stage")?;
-    assert_eq!(spec_ids(&stage.module), [1, 3]);
-    Ok(())
-}
-
-#[test]
 fn a_value_of_the_wrong_type_is_an_error() -> TestResult {
     assert_eq!(
         error(&[(2, "1.5")])?,

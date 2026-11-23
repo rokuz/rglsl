@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl::compact::Remap;
-use rglsl::object::{BindingAssignment, GlobalSymbol, ObjectModule, PathStep, SymbolKind};
+use rglsl::object::{GlobalSymbol, ObjectModule, PathStep, SymbolKind};
 use rglsl::{
     AddressSpace, Arena, Expression, Function, GlobalVariable, Handle, Module, Override, Span,
     Type, TypeInner, UniqueArena,
@@ -48,8 +48,6 @@ pub(crate) struct MergedGlobal {
     pub name: String,
     pub kind: SymbolKind,
     pub implicit: Vec<Vec<PathStep>>,
-    pub automatic_location: bool,
-    pub binding: BindingAssignment,
     pub initializer: Option<Handle<Expression>>,
 }
 
@@ -509,8 +507,6 @@ impl Builder {
             kind,
             instance,
             implicit_sizes: implicit,
-            automatic_location,
-            binding,
             initializer: _,
             on_use: _,
         } = symbol;
@@ -527,8 +523,6 @@ impl Builder {
                 &Candidate {
                     global: &global,
                     implicit: &implicit,
-                    automatic_location,
-                    binding,
                     instance,
                     initializer,
                 },
@@ -542,8 +536,6 @@ impl Builder {
             name,
             kind,
             implicit,
-            automatic_location,
-            binding,
             initializer,
         });
         if let Some(instance) = instance {

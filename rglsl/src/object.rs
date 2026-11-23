@@ -12,7 +12,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 39;
+pub const FORMAT_VERSION: u32 = 40;
 
 #[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -417,8 +417,6 @@ pub struct GlobalSymbol {
     pub kind: SymbolKind,
     pub instance: Option<String>,
     pub implicit_sizes: Vec<Vec<PathStep>>,
-    pub automatic_location: bool,
-    pub binding: BindingAssignment,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")
@@ -430,24 +428,6 @@ pub struct GlobalSymbol {
     #[cfg_attr(feature = "deserialize", serde(default))]
     #[rglo(skip_if = Option::is_none)]
     pub initializer: Option<Handle<crate::Expression>>,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Rglo)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
-pub enum BindingAssignment {
-    #[default]
-    Explicit,
-    Automatic {
-        set: Option<u32>,
-    },
-}
-
-impl BindingAssignment {
-    pub const fn is_automatic(self) -> bool {
-        matches!(self, Self::Automatic { .. })
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Rglo)]

@@ -43,7 +43,6 @@ pub use program::{
 };
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
-pub use rglsl::proc::{BindingShifts, ResourceClass};
 pub use rglsl_opt::{OptError, OptLevel, OptOptions, Specialization, TargetGpu};
 pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
 pub use rglsl_sema::{Configuration, ResourceLimits};
@@ -53,21 +52,8 @@ use merge::{Builder, MergedGlobal};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Options {
-    pub auto_map_locations: bool,
-    pub auto_map_bindings: bool,
-    pub binding_shifts: Vec<(ShaderStage, rglsl::proc::BindingShifts)>,
-    pub keep_uncalled: bool,
     pub limits: rglsl_sema::ResourceLimits,
     pub validate_io: bool,
-}
-
-impl Options {
-    fn binding_shifts(&self, stage: ShaderStage) -> Option<&rglsl::proc::BindingShifts> {
-        self.binding_shifts
-            .iter()
-            .find(|&&(candidate, _)| candidate == stage)
-            .map(|(_, shifts)| shifts)
-    }
 }
 
 #[derive(Debug)]
@@ -224,19 +210,12 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     };
     let table = SymbolTable::build(&specialized, &mut errors);
     let order = match main {
-        Some(main) => calls::order(
-            &specialized,
-            main,
-            &table,
-            options.keep_uncalled,
-            &mut errors,
-        ),
+        Some(main) => calls::order(&specialized, main, &table, &mut errors),
         None => Vec::new(),
     };
     let (Some(main), Some(stage), true) = (main, stage, errors.is_empty()) else {
         return Err(errors.into());
     };
-    let multi_object = specialized.len() > 1;
     let mut geometry_errors = Vec::new();
     if stage == ShaderStage::Geometry
         && let Some(primitive) = specialized
@@ -310,14 +289,6 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     module.entry_points.push(entry);
     module.debug_info = debug_info;
     module.span_sources = span_sources;
-    if multi_object {
-        if options.auto_map_locations {
-            interface::assign_locations(&mut module, &globals, stage);
-        }
-        if options.auto_map_bindings {
-            interface::assign_bindings(&mut module, &globals, options.binding_shifts(stage));
-        }
-    }
     fix_up_library_functions(&mut module, &library_functions, stage);
     Ok(Merged {
         stage,

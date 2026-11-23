@@ -2,18 +2,17 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use rglsl::ShaderStage;
 use rglsl::front::glsl;
 use rglsl::object::ObjectModule;
-use rglsl::valid::ModuleInfo;
-use rglsl::{Module, ShaderStage};
 
 use super::include::{Includes, Resolve};
 use super::{
     CompileOptions, Compiler, Diagnostic, Diagnostics, Emission, Origin, ProgramOptions,
     STAGE_ORDER, Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings,
-    optimize, optimize_modules, optimizer_diagnostic, optimizer_message, write_spirv,
+    optimize, optimizer_diagnostic, write_spirv,
 };
-use crate::{CompileError, InvalidModule, message, reflect, rename_entry_point};
+use crate::{CompileError, InvalidModule, message, reflect};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Source<'a> {
@@ -79,7 +78,6 @@ struct Unit<'a> {
     text: Option<&'a str>,
     options: &'a CompileOptions,
     object: Option<ObjectModule>,
-    info: Option<ModuleInfo>,
     compiled: bool,
 }
 
@@ -91,10 +89,7 @@ impl Compiler {
         resolve: &mut Resolve<'_>,
     ) -> Compiled {
         let (result, files_read) = self.compile_object(source, options, resolve);
-        Compiled {
-            result: result.map(|(object, _)| object),
-            files_read,
-        }
+        Compiled { result, files_read }
     }
 
     fn compile_object(
@@ -102,15 +97,15 @@ impl Compiler {
         source: &str,
         options: &CompileOptions,
         resolve: &mut Resolve<'_>,
-    ) -> (Result<(ObjectModule, ModuleInfo), Diagnostics>, Vec<String>) {
+    ) -> (Result<ObjectModule, Diagnostics>, Vec<String>) {
         let frontend = options.frontend(Arc::clone(&self.builtins));
         let (mut includer, root) = Includes::new(options, source, resolve);
         let result = crate::compile_object(&frontend, source, root, &mut includer);
         let files_read = includer.files_read(root);
         let result = match result {
-            Ok(crate::CompiledObject { mut object, info }) => {
+            Ok(crate::CompiledObject { mut object, .. }) => {
                 stamp(&mut object, options);
-                Ok((object, info))
+                Ok(object)
             }
             Err(error) => Err(enhanced(
                 object_diagnostics(&error, source, options),
@@ -173,7 +168,7 @@ impl Compiler {
     ) -> Build {
         let mut build = Build::default();
         let single = match *inputs {
-            [ref input] if options.link => match input.source {
+            [ref input] => match input.source {
                 Source::Glsl(text) => input.options.stage.map(|stage| (input, text, stage)),
                 Source::Object(_) => None,
             },
@@ -187,11 +182,7 @@ impl Compiler {
                 let unit = self.unit(input, resolve, &mut build);
                 units.push(unit);
             }
-            if options.link {
-                self.link(&units, options, resolve, &mut build);
-            } else {
-                unlinked(units, options, &mut build);
-            }
+            self.link(&units, options, resolve, &mut build);
         }
         let files_read: BTreeSet<String> = build.files_read.drain(..).collect();
         build.files_read = files_read.into_iter().collect();
@@ -207,32 +198,27 @@ impl Compiler {
         let name = input.options.name.clone();
         let (result, text) = match input.source {
             Source::Object(bytes) => (
-                super::read_object(bytes)
-                    .map(|object| (object, None))
-                    .map_err(|diagnostics| Diagnostics {
-                        list: diagnostics
-                            .list
-                            .into_iter()
-                            .map(|diagnostic| Diagnostic {
-                                file: Some(name.clone()),
-                                ..diagnostic
-                            })
-                            .collect(),
-                    }),
+                super::read_object(bytes).map_err(|diagnostics| Diagnostics {
+                    list: diagnostics
+                        .list
+                        .into_iter()
+                        .map(|diagnostic| Diagnostic {
+                            file: Some(name.clone()),
+                            ..diagnostic
+                        })
+                        .collect(),
+                }),
                 None,
             ),
             Source::Glsl(text) => {
                 let (result, read) = self.compile_object(text, &input.options, resolve);
                 build.files_read.extend(read);
-                (
-                    result.map(|(object, info)| (object, Some(info))),
-                    Some(text),
-                )
+                (result, Some(text))
             }
         };
-        let (object, info, diagnostics) = match result {
-            Ok((object, info)) => (Some(object), info, Diagnostics::default()),
-            Err(diagnostics) => (None, None, diagnostics),
+        let (object, diagnostics) = match result {
+            Ok(object) => (Some(object), Diagnostics::default()),
+            Err(diagnostics) => (None, diagnostics),
         };
         let compiled = object.is_some();
         build.units.push(UnitReport {
@@ -245,7 +231,6 @@ impl Compiler {
             text,
             options: &input.options,
             object,
-            info,
             compiled,
         }
     }
@@ -298,7 +283,7 @@ impl Compiler {
                 report.compiled = report.diagnostics.is_empty();
                 let compiled = report.compiled;
                 build.units.push(report);
-                build.reflection = self.reflect(&[unit(compiled)], &[], options, resolve);
+                build.reflection = self.reflect(&[unit(compiled)], options, resolve);
                 return;
             }
             Err(CompileError::Invalid(invalid)) => {
@@ -308,8 +293,7 @@ impl Compiler {
                     .push(validation_diagnostic(&invalid, &compile_options.name));
                 report.compiled = false;
                 build.units.push(report);
-                build.reflection =
-                    self.reflect(&[unit(true)], &[(stage, &invalid.module)], options, resolve);
+                build.reflection = self.reflect(&[unit(true)], options, resolve);
                 return;
             }
             Err(CompileError::Object(errors) | CompileError::Link(errors)) => {
@@ -319,18 +303,17 @@ impl Compiler {
                         .iter()
                         .map(|error| link_diagnostic(Some(stage), error)),
                 );
-                build.reflection = self.reflect(&[unit(true)], &[], options, resolve);
+                build.reflection = self.reflect(&[unit(true)], options, resolve);
                 return;
             }
         };
         build.units.push(report);
         if let Err(error) = optimize(core::slice::from_mut(&mut linked), options) {
             build.link.list.push(optimizer_diagnostic(&error));
-            build.reflection = self.reflect(&[unit(true)], &[], options, resolve);
+            build.reflection = self.reflect(&[unit(true)], options, resolve);
             return;
         }
-        build.reflection =
-            self.reflect(&[unit(true)], &[(stage, &linked.module)], options, resolve);
+        build.reflection = self.reflect(&[unit(true)], options, resolve);
         if options.generate_spirv {
             build.stages.push(stage_output(
                 stage,
@@ -359,7 +342,7 @@ impl Compiler {
             })
             .collect();
         if units.iter().any(|unit| !unit.compiled) {
-            build.reflection = self.reflect(&reflected, &[], options, resolve);
+            build.reflection = self.reflect(&reflected, options, resolve);
             return;
         }
         let objects: Vec<ObjectModule> = units
@@ -370,21 +353,17 @@ impl Compiler {
             Ok(linked) => linked,
             Err(errors) => {
                 build.link.list.extend(errors.list);
-                build.reflection = self.reflect(&reflected, &[], options, resolve);
+                build.reflection = self.reflect(&reflected, options, resolve);
                 return;
             }
         };
         build.link.list.extend(link_warnings(&linked, options).list);
         if let Err(error) = optimize(&mut linked, options) {
             build.link.list.push(optimizer_diagnostic(&error));
-            build.reflection = self.reflect(&reflected, &[], options, resolve);
+            build.reflection = self.reflect(&reflected, options, resolve);
             return;
         }
-        let modules: Vec<(ShaderStage, &Module)> = linked
-            .iter()
-            .map(|stage| (stage.stage, &stage.module))
-            .collect();
-        build.reflection = self.reflect(&reflected, &modules, options, resolve);
+        build.reflection = self.reflect(&reflected, options, resolve);
         if !options.generate_spirv {
             return;
         }
@@ -409,7 +388,6 @@ impl Compiler {
     fn reflect(
         &self,
         units: &[ReflectUnit<'_>],
-        modules: &[(ShaderStage, &Module)],
         options: &ProgramOptions,
         resolve: &mut Resolve<'_>,
     ) -> Option<String> {
@@ -445,17 +423,11 @@ impl Compiler {
                         compiled: *compiled,
                     })
                     .collect(),
-                module: modules
-                    .iter()
-                    .find(|(candidate, _)| candidate == stage)
-                    .map(|&(_, module)| module),
             })
             .collect();
         let settings = reflect::Settings {
             options: reflection,
             spirv: options.generate_spirv,
-            keep_uncalled: options.keep_uncalled,
-            auto_map_bindings: options.auto_map_bindings,
         };
         Some(reflect::reflect(settings, &inputs))
     }
@@ -478,60 +450,6 @@ struct ReflectUnit<'a> {
     text: &'a str,
     options: &'a CompileOptions,
     compiled: bool,
-}
-
-fn unlinked(units: Vec<Unit<'_>>, options: &ProgramOptions, build: &mut Build) {
-    if units.iter().any(|unit| !unit.compiled) || !options.generate_spirv {
-        return;
-    }
-    for unit in units {
-        let (Some(mut object), Some(stage)) = (unit.object, unit.options.stage) else {
-            continue;
-        };
-        let info = match unit.info {
-            Some(info) => Ok(info),
-            None => crate::validate_object(&object).map_err(|errors| {
-                Diagnostic::source(
-                    &unit.name,
-                    format!("cannot validate the module of {}: {errors}", unit.name),
-                )
-            }),
-        };
-        let optimized = info.and_then(|mut info| {
-            optimize_modules(
-                &mut [rglsl_opt::StageModule {
-                    stage,
-                    module: &mut object.unit.module,
-                    info: &mut info,
-                }],
-                options,
-            )
-            .map(|()| info)
-            .map_err(|error| Diagnostic::source(&unit.name, optimizer_message(&error)))
-        });
-        let info = match optimized {
-            Ok(info) => info,
-            Err(diagnostic) => {
-                build.stages.push(StageOutput {
-                    stage,
-                    name: unit.name,
-                    entry_point: String::new(),
-                    result: Err(diagnostic),
-                });
-                continue;
-            }
-        };
-        rename_entry_point(&mut object.unit.module, object.entry_point.as_deref());
-        let emission = Emission {
-            module: &object.unit.module,
-            info: &info,
-            processes: &object.processes,
-            source_file: Some((&unit.name, object.unit.glsl_version)),
-        };
-        build
-            .stages
-            .push(stage_output(stage, &unit.name, &emission, options));
-    }
 }
 
 fn stage_output(

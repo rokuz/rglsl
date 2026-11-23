@@ -4,8 +4,8 @@ use std::slice;
 
 use crate::api::{
     self, Blob, CompileOptions, Compiler, DebugInfo, Diagnostics, Disassembly, IncludeResult,
-    Limits, Location, Object, OptLevel, Program, ProgramOptions, Resource, ResultCode, Severity,
-    Stage, TargetGpu,
+    Limits, Location, Object, OptLevel, Program, ProgramOptions, ResultCode, Severity, Stage,
+    TargetGpu,
 };
 
 pub type IncludeCallback = Option<
@@ -174,24 +174,6 @@ pub unsafe extern "C" fn rglsl_compile_options_add_include_dir(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_auto_map_bindings(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.auto_map_bindings = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_auto_map_locations(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.auto_map_locations = enabled)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_debug_info(
     options: *mut CompileOptions,
     level: DebugInfo,
@@ -334,24 +316,6 @@ pub unsafe extern "C" fn rglsl_program_options_destroy(options: *mut ProgramOpti
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_auto_map_bindings(
-    options: *mut ProgramOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.auto_map_bindings = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_auto_map_locations(
-    options: *mut ProgramOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.auto_map_locations = enabled)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_program_options_set_debug_info(
     options: *mut ProgramOptions,
     level: DebugInfo,
@@ -484,33 +448,6 @@ pub unsafe extern "C" fn rglsl_compile_options_set_file_system_includes(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_keep_uncalled(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.keep_uncalled = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_hlsl_offsets(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.hlsl_offsets = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_export_functions(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.export_functions = enabled)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_suppress_warnings(
     options: *mut CompileOptions,
     enabled: bool,
@@ -520,39 +457,12 @@ pub unsafe extern "C" fn rglsl_compile_options_set_suppress_warnings(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_link(
-    options: *mut ProgramOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.link = enabled)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_program_options_set_generate_spirv(
     options: *mut ProgramOptions,
     enabled: bool,
 ) -> ResultCode {
     let options = unsafe { options.as_mut() };
     api::program_options_set_flags(options, |options| options.generate_spirv = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_keep_uncalled(
-    options: *mut ProgramOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.keep_uncalled = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_export_functions(
-    options: *mut ProgramOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.export_functions = enabled)
 }
 
 #[unsafe(no_mangle)]
@@ -571,15 +481,6 @@ pub unsafe extern "C" fn rglsl_compile_options_set_enhanced_messages(
 ) -> ResultCode {
     let options = unsafe { options.as_mut() };
     api::compile_options_set_flags(options, |options| options.enhanced_messages = enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_auto_sampled_textures(
-    options: *mut CompileOptions,
-    enabled: bool,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.auto_sampled_textures = enabled)
 }
 
 #[unsafe(no_mangle)]
@@ -695,16 +596,6 @@ pub unsafe extern "C" fn rglsl_compile_options_add_preamble_text(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_add_resource_set_binding(
-    options: *mut CompileOptions,
-    value: *const c_char,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    let value = unsafe { c_str(value) };
-    api::compile_options_add_resource_set_binding(options, value)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_entry_point(
     options: *mut CompileOptions,
     name: *const c_char,
@@ -725,27 +616,6 @@ pub unsafe extern "C" fn rglsl_compile_options_set_vulkan_version(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_binding_shift(
-    options: *mut CompileOptions,
-    resource: Resource,
-    base: u32,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_binding_shift(options, resource, None, base)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_compile_options_set_binding_shift_for_set(
-    options: *mut CompileOptions,
-    resource: Resource,
-    set: u32,
-    base: u32,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::compile_options_set_binding_shift(options, resource, Some(set), base)
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_limits(
     options: *mut CompileOptions,
     limits: *const Limits,
@@ -753,29 +623,6 @@ pub unsafe extern "C" fn rglsl_compile_options_set_limits(
     let options = unsafe { options.as_mut() };
     let limits = unsafe { limits.as_ref() };
     api::compile_options_set_limits(options, limits)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_binding_shift(
-    options: *mut ProgramOptions,
-    stage: Stage,
-    resource: Resource,
-    base: u32,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_binding_shift(options, stage, resource, None, base)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_options_set_binding_shift_for_set(
-    options: *mut ProgramOptions,
-    stage: Stage,
-    resource: Resource,
-    set: u32,
-    base: u32,
-) -> ResultCode {
-    let options = unsafe { options.as_mut() };
-    api::program_options_set_binding_shift(options, stage, resource, Some(set), base)
 }
 
 #[unsafe(no_mangle)]

@@ -408,7 +408,7 @@ fn hexadecimal_output_and_variable_names() -> TestResult {
 }
 
 #[test]
-fn renames_the_entry_point_and_keeps_uncalled_functions() -> TestResult {
+fn renames_the_entry_point() -> TestResult {
     let directory = work_dir("entry_point")?;
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
     let run = rglsl(
@@ -419,44 +419,6 @@ fn renames_the_entry_point_and_keeps_uncalled_functions() -> TestResult {
     assert_eq!(
         entry_point_names(&module(&directory.join("renamed.spv"))?),
         ["foo"]
-    );
-    let run = rglsl(&directory, &["-V", "-o", "dropped.spv", "shader.frag"])?;
-    assert_eq!(run.code, Some(0));
-    let run = rglsl(&directory, &["-V", "--ku", "-o", "kept.spv", "shader.frag"])?;
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    let dropped = module(&directory.join("dropped.spv"))?.functions.len();
-    let kept = module(&directory.join("kept.spv"))?.functions.len();
-    assert_eq!(kept, dropped + 1);
-    Ok(())
-}
-
-#[test]
-fn shifts_bindings_and_sets() -> TestResult {
-    let directory = work_dir("shifts")?;
-    fs::write(directory.join("shader.frag"), FRAGMENT)?;
-    let run = rglsl(
-        &directory,
-        &[
-            "-V",
-            "--sub",
-            "10",
-            "--scsb",
-            "frag",
-            "20",
-            "--scsb",
-            "vert",
-            "40",
-            "--rsb",
-            "3",
-            "shader.frag",
-        ],
-    )?;
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    let module = module(&directory.join("frag.spv"))?;
-    assert_eq!(decorations(&module, spirv::Decoration::Binding), [11, 22]);
-    assert_eq!(
-        decorations(&module, spirv::Decoration::DescriptorSet),
-        [3, 3]
     );
     Ok(())
 }
@@ -689,48 +651,8 @@ fn takes_preamble_text() -> TestResult {
 }
 
 #[test]
-fn compiles_without_linking() -> TestResult {
-    let directory = work_dir("no-link")?;
-    fs::write(
-        directory.join("functions.comp"),
-        "#version 450\nfloat imported(float x);\nfloat add(float a, float b) { return a + imported(b); }\n",
-    )?;
-    let run = rglsl(&directory, &["-V", "--no-link", "functions.comp"])?;
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    let module = module(&directory.join("comp.spv"))?;
-    assert!(module.entry_points.is_empty());
-    assert!(module.capabilities.iter().any(|instruction| matches!(
-        instruction.operands.first(),
-        Some(rspirv::dr::Operand::Capability(spirv::Capability::Linkage))
-    )));
-    let linkage: Vec<String> = module
-        .annotations
-        .iter()
-        .filter_map(|instruction| match instruction.operands.as_slice() {
-            [
-                _,
-                rspirv::dr::Operand::Decoration(spirv::Decoration::LinkageAttributes),
-                rspirv::dr::Operand::LiteralString(name),
-                rspirv::dr::Operand::LinkageType(kind),
-            ] => Some(format!("{name} {kind:?}")),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(linkage, ["imported Import", "add Export"]);
-    fs::write(directory.join("main.frag"), FRAGMENT)?;
-    let run = rglsl(&directory, &["-V", "--no-link", "main.frag"])?;
-    assert_eq!(run.code, Some(2));
-    assert!(
-        run.stderr.contains("main function cannot be exported"),
-        "{}",
-        run.stderr
-    );
-    Ok(())
-}
-
-#[test]
-fn keeps_uncalled_functions_of_every_linked_file() -> TestResult {
-    let directory = work_dir("keep-uncalled")?;
+fn drops_uncalled_functions_of_every_linked_file() -> TestResult {
+    let directory = work_dir("uncalled")?;
     fs::write(
         directory.join("main.frag"),
         "#version 450\nlayout(location = 0) out vec4 color;\nfloat used(float x);\nfloat unusedA(float x) { return x * 2.0; }\nvoid main() { color = vec4(used(1.0)); }\n",
@@ -742,9 +664,6 @@ fn keeps_uncalled_functions_of_every_linked_file() -> TestResult {
     let run = rglsl(&directory, &["-V", "main.frag", "helpers.frag"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert_eq!(module(&directory.join("frag.spv"))?.functions.len(), 2);
-    let run = rglsl(&directory, &["-V", "--ku", "main.frag", "helpers.frag"])?;
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert_eq!(module(&directory.join("frag.spv"))?.functions.len(), 4);
     Ok(())
 }
 

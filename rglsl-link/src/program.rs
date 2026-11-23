@@ -6,7 +6,7 @@ use rglsl::{AddressSpace, ArraySize, Binding, Handle, Module, ShaderStage, Type,
 use crate::error::{LinkError, LinkErrors};
 use crate::merge::{MergedGlobal, SpaceClass, space_class};
 use crate::unify::Mismatch;
-use crate::{Linked, Merged, Options, finish, interface, merge};
+use crate::{Linked, Merged, Options, finish, merge};
 
 const fn pipeline_position(stage: ShaderStage) -> Option<u8> {
     match stage {
@@ -350,44 +350,6 @@ fn check_interface(from: &Merged, to: &Merged, errors: &mut Vec<LinkError>) {
     }
 }
 
-fn match_pipeline_locations(merged: &mut [Merged]) {
-    let mut order: Vec<(u8, usize)> = merged
-        .iter()
-        .enumerate()
-        .filter_map(|(index, stage)| {
-            pipeline_position(stage.stage).map(|position| (position, index))
-        })
-        .collect();
-    order.sort_unstable();
-    for pair in order.windows(2) {
-        let [(_, first), (_, second)] = *pair else {
-            continue;
-        };
-        let (low, high) = (first.min(second), first.max(second));
-        let (head, tail) = merged.split_at_mut(high);
-        let (Some(low_stage), Some(high_stage)) = (head.get_mut(low), tail.first_mut()) else {
-            continue;
-        };
-        let (from, to) = if first < second {
-            (low_stage, high_stage)
-        } else {
-            (high_stage, low_stage)
-        };
-        interface::match_locations(
-            interface::StageIo {
-                module: &mut from.module,
-                globals: &from.globals,
-                stage: from.stage,
-            },
-            interface::StageIo {
-                module: &mut to.module,
-                globals: &to.globals,
-                stage: to.stage,
-            },
-        );
-    }
-}
-
 pub fn link_program(
     stages: Vec<Vec<rglsl::object::ObjectModule>>,
     options: &Options,
@@ -427,9 +389,6 @@ pub fn link_program_staged(
         {
             errors.push((Some(first.stage), LinkError::MultipleEntryPoints));
         }
-    }
-    if options.auto_map_locations {
-        match_pipeline_locations(&mut merged);
     }
     let mut unstaged = Vec::new();
     check_resources(&merged, &mut unstaged);

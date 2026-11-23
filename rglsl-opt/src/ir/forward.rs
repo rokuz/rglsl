@@ -25,15 +25,8 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
     let mut changed = false;
     let classes = classify_types(&module.types);
     let debug = context.keeps_variables();
-    let complete = context.whole_program();
-    if complete {
-        changed |= private::localize(module, &classes)?;
-    }
-    let undefined = if complete {
-        private::never_written(module, &classes)
-    } else {
-        vec![false; module.global_variables.len()]
-    };
+    changed |= private::localize(module, &classes)?;
+    let undefined = private::never_written(module, &classes);
     let readonly: Vec<bool> = module
         .global_variables
         .iter()

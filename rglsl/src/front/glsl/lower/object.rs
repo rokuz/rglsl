@@ -13,8 +13,8 @@ use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{
-    BindingAssignment, CompiledUnit, DeadCall, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
-    ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
+    CompiledUnit, DeadCall, FunctionSymbol, GlobalSymbol, Library, ObjectModule, ObjectTarget,
+    ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
 use crate::valid::{ValidationError, ValidationFlags, ValidationMode, Validator};
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
@@ -294,14 +294,6 @@ impl Lowerer<'_> {
             kind,
             instance,
             implicit_sizes,
-            automatic_location: self.automatic_locations.contains(&handle),
-            binding: self
-                .automatic_bindings
-                .iter()
-                .find(|&&(global, _)| global == handle)
-                .map_or(BindingAssignment::Explicit, |&(_, set)| {
-                    BindingAssignment::Automatic { set }
-                }),
             on_use: self.on_use_globals.contains(&handle),
             initializer: self.constant_initializers.get(&handle).copied(),
         }

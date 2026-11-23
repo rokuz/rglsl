@@ -8,7 +8,6 @@ pub mod index;
 mod layouter;
 mod overloads;
 mod reachability;
-mod resource;
 mod shared_blocks;
 pub use rglsl_types::small_float;
 mod single_exit;
@@ -26,7 +25,6 @@ pub use index::{IndexableLength, IndexableLengthError};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
-pub use resource::{BindingShifts, ResourceClass, free_binding};
 pub use shared_blocks::{SharedBlockConflict, SharedBlocks};
 pub use single_exit::{
     ExitTypes, leave_loops_before_returning, returns_inside_exiting_loops, single_exit_module,

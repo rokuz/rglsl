@@ -10,9 +10,9 @@ use rglsl_c::{
     Blob, CompileOptions, Compiler, Diagnostics, Limits, Object, OptLevel, Program, ProgramOptions,
     RGLSL_DEBUG_INFO_LINES, RGLSL_DEBUG_INFO_STRIPPED, RGLSL_DISASSEMBLY_GLSLANG,
     RGLSL_DISASSEMBLY_STANDARD, RGLSL_FORMAT_ERROR_COLUMN, RGLSL_FORMAT_UNNAMED_SOURCE,
-    RGLSL_OPT_LEVEL_PERFORMANCE, RGLSL_REFLECT_ALL_BLOCK_VARIABLES, RGLSL_RESOURCE_TEXTURE,
-    RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_SPIRV,
-    RGLSL_RESULT_OK, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
+    RGLSL_OPT_LEVEL_PERFORMANCE, RGLSL_REFLECT_ALL_BLOCK_VARIABLES, RGLSL_RESULT_COMPILE_FAILED,
+    RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_SPIRV, RGLSL_RESULT_OK,
+    RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
     RGLSL_TARGET_GPU_UNIVERSAL_MOBILE, ResultCode, Stage, TargetGpu,
 };
 
@@ -192,11 +192,6 @@ fn builds_a_program_with_reflection_and_every_option() -> TestResult {
     let codes = unsafe {
         [
             rglsl_c::rglsl_compile_options_set_entry_point(fragment.pointer, c"shade".as_ptr()),
-            rglsl_c::rglsl_compile_options_set_binding_shift(
-                fragment.pointer,
-                RGLSL_RESOURCE_TEXTURE,
-                10,
-            ),
             rglsl_c::rglsl_compile_options_set_vulkan_version(fragment.pointer, 1, 1),
             rglsl_c::rglsl_compile_options_set_spirv_version(fragment.pointer, 1, 3),
             rglsl_c::rglsl_compile_options_set_debug_info(fragment.pointer, RGLSL_DEBUG_INFO_LINES),
@@ -204,7 +199,7 @@ fn builds_a_program_with_reflection_and_every_option() -> TestResult {
             rglsl_c::rglsl_compile_options_set_spirv_version(vertex.pointer, 1, 3),
         ]
     };
-    assert_eq!(codes, [RGLSL_RESULT_OK; 7]);
+    assert_eq!(codes, [RGLSL_RESULT_OK; 6]);
     let program_options = program_options()?;
     let codes = unsafe {
         [
@@ -247,15 +242,11 @@ fn builds_a_program_with_reflection_and_every_option() -> TestResult {
     let fragment_text = disassembly(&spirv(&program, 1)?)?;
     assert!(fragment_text.contains("\"shade\""), "{fragment_text}");
     assert!(
-        fragment_text.contains("Decorate 13(image) Binding 11"),
+        fragment_text.contains("Decorate 13(image) Binding 1"),
         "{fragment_text}"
     );
     assert!(
         fragment_text.contains("ModuleProcessed  \"entry-point shade\""),
-        "{fragment_text}"
-    );
-    assert!(
-        fragment_text.contains("ModuleProcessed  \"shift-texture-binding 10\""),
         "{fragment_text}"
     );
     assert!(fragment_text.contains("Line "), "{fragment_text}");
@@ -327,14 +318,13 @@ fn compiles_with_macros_and_reports_the_files_read() -> TestResult {
                 c"extra.h".as_ptr(),
                 c"".as_ptr(),
             ),
-            rglsl_c::rglsl_compile_options_set_keep_uncalled(compute.pointer, true),
             rglsl_c::rglsl_compile_options_set_debug_info(
                 compute.pointer,
                 RGLSL_DEBUG_INFO_STRIPPED,
             ),
         ]
     };
-    assert_eq!(codes, [RGLSL_RESULT_OK; 7]);
+    assert_eq!(codes, [RGLSL_RESULT_OK; 6]);
     let source = CString::new(COMPUTE.to_str()?.replacen(
         "#version 450\n",
         "#version 450\n#include \"extra.h\"\n",
@@ -531,33 +521,6 @@ fn validate_io_rejects_inputs_without_outputs() -> TestResult {
     let diagnostics = Owned::new(diagnostics, rglsl_c::rglsl_diagnostics_destroy)?;
     let text = string(unsafe { rglsl_c::rglsl_diagnostics_text(diagnostics.as_const()) })?;
     assert!(text.contains("statically used input: tint"), "{text}");
-    Ok(())
-}
-
-#[test]
-fn auto_sampled_textures_option() -> TestResult {
-    let compiler = compiler()?;
-    let fragment = options(c"separate.frag", RGLSL_STAGE_FRAGMENT)?;
-    let code =
-        unsafe { rglsl_c::rglsl_compile_options_set_auto_sampled_textures(fragment.pointer, true) };
-    assert_eq!(code, RGLSL_RESULT_OK);
-    let source = c"#version 450
-layout(binding = 0) uniform texture2D image;
-layout(binding = 1) uniform sampler linear;
-layout(location = 0) in vec2 uv;
-layout(location = 0) out vec4 color;
-void main() {
-    color = texture(sampler2D(image, linear), uv);
-}
-";
-    let program_options = program_options()?;
-    let (code, program, _) = build(&compiler, &[source], &[&fragment], &program_options);
-    assert_eq!(code, RGLSL_RESULT_OK);
-    let program = Owned::new(program, rglsl_c::rglsl_program_destroy)?;
-    let text = disassembly(&spirv(&program, 0)?)?;
-    assert!(text.contains("TypeSampledImage"), "{text}");
-    assert!(!text.contains("TypeSampler"), "{text}");
-    assert!(!text.contains("linear"), "{text}");
     Ok(())
 }
 

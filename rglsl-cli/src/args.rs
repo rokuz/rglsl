@@ -1,6 +1,4 @@
-use rglsl_link::{
-    DebugInfo, Macro, OptLevel, OptOptions, ResourceClass, ShaderStage, Specialization, TargetGpu,
-};
+use rglsl_link::{DebugInfo, Macro, OptLevel, OptOptions, Specialization, TargetGpu};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -13,25 +11,10 @@ pub enum VersionDump {
     Bare,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Shift {
-    pub class: ResourceClass,
-    pub stage: Option<ShaderStage>,
-    pub base: Option<u32>,
-    pub per_set: Vec<(u32, u32)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResourceSet {
-    pub stage: Option<ShaderStage>,
-    pub values: Vec<String>,
-}
-
 #[derive(Debug, Default)]
 pub struct Options {
     pub spirv: bool,
     pub link: bool,
-    pub no_link: bool,
     pub object: bool,
     pub preprocess: bool,
     pub disassemble: bool,
@@ -46,18 +29,11 @@ pub struct Options {
     pub vulkan: Option<(u8, u8)>,
     pub spirv_version: Option<(u8, u8)>,
     pub debug: DebugInfo,
-    pub auto_map_bindings: bool,
-    pub auto_map_locations: bool,
-    pub keep_uncalled: bool,
-    pub hlsl_offsets: bool,
     pub invert_y: bool,
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
     pub enhanced_messages: bool,
     pub validate_io: bool,
-    pub auto_sampled_textures: bool,
-    pub shifts: Vec<Shift>,
-    pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
     pub suppress_info: bool,
     pub suppress_warnings: bool,
@@ -174,10 +150,6 @@ impl Cursor {
         self.arguments.get(self.index).map_or("", String::as_str)
     }
 
-    fn next(&self) -> Option<&str> {
-        self.arguments.get(self.index + 1).map(String::as_str)
-    }
-
     fn take_next(&mut self) -> Option<String> {
         let value = self.arguments.get(self.index + 1).cloned();
         if value.is_some() {
@@ -185,25 +157,6 @@ impl Cursor {
         }
         value
     }
-
-    fn remaining(&self) -> usize {
-        self.arguments.len().saturating_sub(self.index)
-    }
-
-    fn peek(&self, offset: usize) -> Option<&str> {
-        self.arguments.get(self.index + offset).map(String::as_str)
-    }
-}
-
-fn starts_with_digit(text: &str) -> bool {
-    text.chars()
-        .next()
-        .is_some_and(|first| first.is_ascii_digit())
-}
-
-fn leading_number(text: &str) -> u32 {
-    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().unwrap_or(0)
 }
 
 fn attached_number(text: &str) -> i64 {
@@ -218,98 +171,6 @@ fn attached_number(text: &str) -> i64 {
     digits.parse().unwrap_or(0)
 }
 
-fn shift_class(word: &str) -> Option<ResourceClass> {
-    Some(match word {
-        "shift-image-bindings" | "shift-image-binding" | "sib" => ResourceClass::Image,
-        "shift-sampler-bindings" | "shift-sampler-binding" | "ssb" => ResourceClass::Sampler,
-        "shift-texture-bindings" | "shift-texture-binding" | "stb" => ResourceClass::Texture,
-        "shift-ubo-bindings" | "shift-ubo-binding" | "sub" => ResourceClass::UniformBuffer,
-        "shift-ssbo-bindings" | "shift-ssbo-binding" | "sbb" => ResourceClass::StorageBuffer,
-        "shift-combined-sampler-bindings" | "shift-combined-sampler-binding" | "scsb" => {
-            ResourceClass::CombinedSampler
-        }
-        "shift-as-bindings" | "shift-as-binding" | "sab" => ResourceClass::AccelerationStructure,
-        _ => return None,
-    })
-}
-
-fn binding_base(cursor: &mut Cursor, class: ResourceClass) -> Result<Shift, Exit> {
-    if cursor.remaining() < 2 {
-        return Err(Exit::Usage);
-    }
-    let mut offset = 1;
-    let mut stage = None;
-    if !starts_with_digit(cursor.peek(offset).unwrap_or_default()) {
-        if cursor.remaining() < 3 {
-            return Err(Exit::Usage);
-        }
-        stage = Some(
-            ShaderStage::from_extension(cursor.peek(offset).unwrap_or_default())
-                .ok_or(Exit::Usage)?,
-        );
-        offset += 1;
-    }
-    let pair_follows = |cursor: &Cursor, offset: usize| {
-        cursor.remaining() >= offset + 2
-            && starts_with_digit(cursor.peek(offset).unwrap_or_default())
-            && starts_with_digit(cursor.peek(offset + 1).unwrap_or_default())
-    };
-    let mut shift = Shift {
-        class,
-        stage,
-        base: None,
-        per_set: Vec::new(),
-    };
-    if pair_follows(cursor, offset) {
-        while pair_follows(cursor, offset) {
-            let base = leading_number(cursor.peek(offset).unwrap_or_default());
-            let set = leading_number(cursor.peek(offset + 1).unwrap_or_default());
-            shift.per_set.retain(|&(existing, _)| existing != set);
-            shift.per_set.push((set, base));
-            offset += 2;
-        }
-    } else {
-        shift.base = Some(leading_number(cursor.peek(offset).unwrap_or_default()));
-        offset += 1;
-    }
-    cursor.index += offset - 1;
-    Ok(shift)
-}
-
-fn resource_set_binding(cursor: &mut Cursor) -> Result<ResourceSet, Exit> {
-    if cursor.remaining() < 2 {
-        return Err(Exit::Usage);
-    }
-    let first = cursor.next().unwrap_or_default().to_owned();
-    if starts_with_digit(&first) {
-        cursor.index += 1;
-        return Ok(ResourceSet {
-            stage: None,
-            values: vec![first],
-        });
-    }
-    if cursor.remaining() < 3 {
-        return Err(Exit::Usage);
-    }
-    let stage = ShaderStage::from_extension(&first).ok_or(Exit::Usage)?;
-    cursor.index += 1;
-    let mut values = Vec::new();
-    while let Some(value) = cursor.next() {
-        if value.starts_with('-') {
-            break;
-        }
-        values.push(value.to_owned());
-        cursor.index += 1;
-    }
-    if values.len() != 1 && values.len() % 3 != 0 {
-        return Err(Exit::Usage);
-    }
-    Ok(ResourceSet {
-        stage: Some(stage),
-        values,
-    })
-}
-
 const TARGET_ENV_EXPECTED: &str = "--target-env expected one of: vulkan1.0, vulkan1.1, vulkan1.2,\nvulkan1.3, vulkan1.4, opengl, spirv1.0, spirv1.1, spirv1.2, spirv1.3,\nspirv1.4, spirv1.5 or spirv1.6";
 
 fn set_vulkan(options: &mut Options) {
@@ -320,14 +181,7 @@ fn set_vulkan(options: &mut Options) {
 fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
     let argument = cursor.current().to_owned();
     let word = argument.get(2..).unwrap_or_default().to_ascii_lowercase();
-    if let Some(class) = shift_class(&word) {
-        let shift = binding_base(cursor, class)?;
-        options.shifts.push(shift);
-        return Ok(());
-    }
     match word.as_str() {
-        "auto-map-bindings" | "auto-map-binding" | "amb" => options.auto_map_bindings = true,
-        "auto-map-locations" | "aml" => options.auto_map_locations = true,
         "client" => match cursor.take_next().as_deref() {
             Some("vulkan100") => set_vulkan(options),
             Some("opengl100") => return Err(Exit::out_of_scope(&word)),
@@ -345,12 +199,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             Some(name) => options.entry_point = Some(name),
             None => return Err(Exit::detailed("no <name> provided", word)),
         },
-        "hlsl-offsets" => options.hlsl_offsets = true,
-        "keep-uncalled" | "ku" => options.keep_uncalled = true,
-        "resource-set-bindings" | "resource-set-binding" | "rsb" => {
-            let set = resource_set_binding(cursor)?;
-            options.resource_sets.push(set);
-        }
         "spirv-dis" => options.spirv_tools_disassembler = true,
         "stdin" => options.stdin = true,
         "suppress-warnings" => options.suppress_warnings = true,
@@ -415,7 +263,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             Some(text) => options.macros.push(Macro::Text(first_line(&text))),
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
-        "no-link" => options.no_link = true,
         "lto" => {
             return Err(Exit::detailed(
                 "link time optimization is part of -O and -Os for a program linked with -l",
@@ -468,7 +315,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         }
         "invert-y" | "iy" => options.invert_y = true,
         "nan-clamp" => options.nan_clamp = true,
-        "auto-sampled-textures" => options.auto_sampled_textures = true,
         "discard-is-terminate" => options.discard_is_terminate = true,
         "enhanced-msgs" => options.enhanced_messages = true,
         "dump-builtin-symbols" => {
@@ -484,8 +330,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         "reflect-all-block-variables" => options.reflect_options.all_block_variables = true,
         "reflect-unwrap-io-blocks" => options.reflect_options.unwrap_io_blocks = true,
         "reflect-all-io-variables" => options.reflect_options.all_io_variables = true,
-        "reflect-shared-std140-ubo" => options.reflect_options.shared_std140_ubo = true,
-        "reflect-shared-std140-ssbo" => options.reflect_options.shared_std140_ssbo = true,
         _ => return Err(Exit::detailed("unrecognized command-line option", argument)),
     }
     Ok(())

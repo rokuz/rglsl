@@ -56,11 +56,6 @@ pub enum ParseErrorKind {
         word: String,
         extensions: &'static [Extension],
     },
-    #[error("{what} is not supported: {reason}")]
-    Unsupported {
-        what: &'static str,
-        reason: &'static str,
-    },
     #[error("internal parser error")]
     Internal,
 }

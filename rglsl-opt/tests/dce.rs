@@ -328,7 +328,6 @@ fn debug_variables_keep_no_dead_code() -> TestResult {
         TargetGpu::default(),
         Context {
             debug: DebugLevel::Variables,
-            ..Context::default()
         },
     )?;
     let function = entry(&module)?;

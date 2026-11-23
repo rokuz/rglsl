@@ -299,8 +299,6 @@ fn bytes(words: &[u32]) -> Vec<u8> {
 
 fn options(target: Target, debug: Debug) -> glsl::Options {
     glsl::Options {
-        auto_map_bindings: true,
-        auto_map_locations: true,
         spirv_version: Some(target.spirv),
         debug_info: debug != Debug::None,
         source_name: Some(String::from("cooperative.comp")),
@@ -392,9 +390,7 @@ fn glslang(source: &str, target: Target, debug: Debug) -> TestResult<Option<Glsl
     let output = scratch("spv");
     std::fs::write(&input, source)?;
     let mut command = Command::new(glslang);
-    command
-        .args(["-V", "-C", "--auto-map-bindings", "--auto-map-locations"])
-        .args(target.glslang_arguments());
+    command.args(["-V", "-C"]).args(target.glslang_arguments());
     if let Some(flag) = debug.glslang_flag() {
         command.arg(flag);
     }

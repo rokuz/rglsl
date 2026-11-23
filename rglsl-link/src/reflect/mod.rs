@@ -9,17 +9,17 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use rglsl::ShaderStage;
 use rglsl::front::glsl::Analyzed;
-use rglsl::{Module, ShaderStage};
 use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, FunctionDefinition, InitDeclaratorList, Node,
 };
-use rglsl_sema::{Analysis, FunctionId, LayoutId, SymbolId};
+use rglsl_sema::{Analysis, FunctionId};
 
 use database::Database;
-use source::{block_defaults, compute_layout, declared_globals, implicit_sizes};
+use source::{block_defaults, compute_layout, implicit_sizes};
 use traverse::UnitCx;
-use types::{Layouts, layout_value};
+use types::Layouts;
 use walk::{Event, Key, Walked};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -31,8 +31,6 @@ pub struct Options {
     pub all_block_variables: bool,
     pub unwrap_io_blocks: bool,
     pub all_io_variables: bool,
-    pub shared_std140_ubo: bool,
-    pub shared_std140_ssbo: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,15 +43,12 @@ pub struct Unit<'a> {
 pub struct StageInput<'a> {
     pub stage: ShaderStage,
     pub units: Vec<Unit<'a>>,
-    pub module: Option<&'a Module>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settings {
     pub options: Options,
     pub spirv: bool,
-    pub keep_uncalled: bool,
-    pub auto_map_bindings: bool,
 }
 
 const STAGE_ORDER: [ShaderStage; 14] = [
@@ -221,21 +216,9 @@ impl Program<'_> {
                 })
             })
             .collect();
-        let reachable = self.reachable(input, &functions, &walked);
+        let reachable = Self::reachable(input, &functions, &walked);
         let processed = RefCell::new(BTreeSet::new());
         let defaults: Vec<_> = units.iter().map(|unit| block_defaults(unit)).collect();
-        let mut used = BTreeSet::new();
-        for ((function, walked), &live) in functions.iter().zip(&walked).zip(&reachable) {
-            if !live {
-                continue;
-            }
-            for event in &walked.events {
-                if let Event::Symbol(symbol, _) = *event {
-                    used.insert((function.unit, symbol));
-                }
-            }
-        }
-        let heap_bindings = self.heap_bindings(input, &used);
         let mut contexts = Vec::with_capacity(units.len());
         for (index, unit) in units.iter().enumerate() {
             let expressions = rglsl_ast::expressions(&unit.unit);
@@ -246,11 +229,8 @@ impl Program<'_> {
                 analysis: &unit.analysis,
                 layouts: Layouts::new(&unit.analysis.types, implicit_sizes(unit, &expressions)),
                 expressions,
-                module: input.module,
                 defaults: defaults.get(index).cloned().unwrap_or_default(),
                 processed: &processed,
-                heap_bindings: &heap_bindings,
-                used: &used,
                 stage,
                 update_stage_masks: Cell::new(true),
                 derefs: RefCell::new(BTreeMap::new()),
@@ -269,10 +249,7 @@ impl Program<'_> {
                 cx.event(*event);
             }
         }
-        if self.settings.options.shared_std140_ubo
-            || self.settings.options.shared_std140_ssbo
-            || self.settings.options.all_io_variables
-        {
+        if self.settings.options.all_io_variables {
             let mut seen = BTreeSet::new();
             let mut linker = 0;
             for cx in &contexts {
@@ -317,65 +294,7 @@ impl Program<'_> {
         }
     }
 
-    fn heap_bindings(
-        &self,
-        input: &StageInput,
-        used: &BTreeSet<(usize, SymbolId)>,
-    ) -> BTreeMap<(usize, SymbolId), i64> {
-        let mut assigned = BTreeMap::new();
-        let settings = self.settings;
-        let Some(module) = input
-            .module
-            .filter(|_| settings.spirv && settings.auto_map_bindings)
-        else {
-            return assigned;
-        };
-        let mut taken: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
-        for (_, global) in module.global_variables.iter() {
-            if let Some(ref binding) = global.binding {
-                taken
-                    .entry(i64::from(binding.group))
-                    .or_default()
-                    .insert(i64::from(binding.binding));
-            }
-        }
-        for (index, unit) in input.units.iter().enumerate() {
-            let unit = unit.analyzed;
-            for symbol in declared_globals(unit) {
-                if !used.contains(&(index, symbol)) {
-                    continue;
-                }
-                let Some(variable) = unit.analysis.symbol(symbol).and_then(|s| s.variable()) else {
-                    continue;
-                };
-                let qualifiers = &variable.qualifiers;
-                if !qualifiers.has_layout(LayoutId::DescriptorHeap)
-                    || qualifiers.has_layout(LayoutId::Binding)
-                {
-                    continue;
-                }
-                let set = layout_value(qualifiers, LayoutId::Set).unwrap_or(0);
-                let slots = taken.entry(set).or_default();
-                let mut binding = 0;
-                while slots.contains(&binding) {
-                    binding += 1;
-                }
-                slots.insert(binding);
-                assigned.insert((index, symbol), binding);
-            }
-        }
-        assigned
-    }
-
-    fn reachable(
-        &self,
-        input: &StageInput,
-        functions: &[Function],
-        walked: &[Walked],
-    ) -> Vec<bool> {
-        if self.settings.keep_uncalled {
-            return vec![true; functions.len()];
-        }
+    fn reachable(input: &StageInput, functions: &[Function], walked: &[Walked]) -> Vec<bool> {
         let mut by_signature: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (index, function) in functions.iter().enumerate() {
             by_signature

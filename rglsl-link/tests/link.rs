@@ -1100,80 +1100,6 @@ vec4 shade() { return gl_FragCoord; }
     Ok(())
 }
 
-fn auto_located(stage: ShaderStage, source: &str) -> TestResult<ObjectModule> {
-    let options = Options {
-        auto_map_locations: true,
-        ..Options::from(stage)
-    };
-    Frontend::default()
-        .compile(&options, source)
-        .map_err(|errors| format!("{source}\n{errors:?}").into())
-}
-
-fn block_locations(linked: &Linked, name: &str) -> TestResult<(u32, Vec<u32>)> {
-    let module = &linked.module;
-    let global = module
-        .global_variables
-        .iter()
-        .map(|(_, global)| global)
-        .find(|global| global.name.as_deref() == Some(name))
-        .ok_or("no such global")?;
-    let Some(rglsl::Binding::Location { location, .. }) = global.io else {
-        return Err("the block has no location".into());
-    };
-    let TypeInner::Struct { ref members, .. } = module.types[global.ty].inner else {
-        return Err("the block is not a structure".into());
-    };
-    let members = members
-        .iter()
-        .filter_map(|member| match member.binding {
-            Some(rglsl::Binding::Location { location, .. }) => Some(location),
-            _ => None,
-        })
-        .collect();
-    Ok((location, members))
-}
-
-#[test]
-fn automatic_block_locations_are_reassigned_across_modules() -> TestResult {
-    let main = auto_located(
-        ShaderStage::Vertex,
-        "#version 450
-out vec4 extra;
-out Block { vec4 a; vec4 b; } blk;
-void fill();
-void main() { extra = vec4(0.0); fill(); }
-",
-    )?;
-    let fill = auto_located(
-        ShaderStage::Vertex,
-        "#version 450
-out vec2 more;
-out vec4 again;
-out Block { vec4 a; vec4 b; } blk;
-void fill() { blk.a = vec4(1.0); blk.b = vec4(2.0); more = vec2(3.0); again = vec4(4.0); }
-",
-    )?;
-    let options = LinkOptions {
-        auto_map_locations: true,
-        auto_map_bindings: false,
-        ..Default::default()
-    };
-    let result = link(&[main.clone(), fill], &options)?;
-    assert_eq!(block_locations(&result, "blk")?, (1, vec![1, 2]));
-    let explicit = auto_located(
-        ShaderStage::Vertex,
-        "#version 450
-layout(location = 5) out Block { vec4 a; vec4 b; } blk;
-void fill() { blk.a = vec4(1.0); }
-",
-    )?;
-    let result = link(&[main, explicit], &options)?;
-    assert_eq!(block_locations(&result, "blk")?, (5, vec![5, 6]));
-    assert!(!spirv(&result)?.is_empty());
-    Ok(())
-}
-
 const WORK_GROUP_MAIN: &str = "#version 450
 layout(local_size_x = 4) in;
 layout(set = 0, binding = 0) buffer Data { uint values[]; } data;
@@ -1251,12 +1177,7 @@ layout(location = 3, xfb_buffer = 1, xfb_offset = 8) out double d;
 void more() { b = vec4(2.0); d = 2.0lf; }
 ",
     )?;
-    let options = LinkOptions {
-        auto_map_locations: true,
-        auto_map_bindings: false,
-        ..Default::default()
-    };
-    let result = link(&[main, more], &options)?;
+    let result = link(&[main, more], &LinkOptions::default())?;
     let mut strides: Vec<(u32, u32)> = result
         .module
         .global_variables
@@ -1265,63 +1186,6 @@ void more() { b = vec4(2.0); d = 2.0lf; }
         .collect();
     strides.sort_unstable();
     assert_eq!(strides, [(0, 32), (0, 32), (1, 16), (1, 16)]);
-    Ok(())
-}
-
-fn io_location(linked: &Linked, name: &str) -> TestResult<u32> {
-    linked
-        .module
-        .global_variables
-        .iter()
-        .find(|&(_, global)| global.name.as_deref() == Some(name))
-        .and_then(|(_, global)| match global.io {
-            Some(rglsl::Binding::Location { location, .. }) => Some(location),
-            _ => None,
-        })
-        .ok_or_else(|| format!("no location for {name}").into())
-}
-
-#[test]
-fn automatic_locations_match_between_stages() -> TestResult {
-    let vertex = auto_located(
-        ShaderStage::Vertex,
-        "#version 450
-layout(location = 0) out vec4 first;
-out vec4 shared_value;
-out Block { vec4 a; } blk;
-out vec4 vertex_only;
-void main() { first = vec4(0.0); shared_value = vec4(1.0); blk.a = vec4(2.0); vertex_only = vec4(3.0); }
-",
-    )?;
-    let fragment = auto_located(
-        ShaderStage::Fragment,
-        "#version 450
-layout(location = 1) in vec4 explicit_input;
-in vec4 fragment_only;
-in Block { vec4 a; } blk;
-in vec4 shared_value;
-layout(location = 0) out vec4 color;
-void main() { color = explicit_input + fragment_only + blk.a + shared_value; }
-",
-    )?;
-    let options = LinkOptions {
-        auto_map_locations: true,
-        auto_map_bindings: false,
-        ..Default::default()
-    };
-    let stages = link_objects(&[vertex, fragment], &options)?;
-    let [ref vertex, ref fragment] = *stages.as_slice() else {
-        return Err("two stages expected".into());
-    };
-    for name in ["shared_value", "blk"] {
-        assert_eq!(io_location(vertex, name)?, io_location(fragment, name)?);
-    }
-    assert_ne!(io_location(fragment, "shared_value")?, 1);
-    assert_ne!(io_location(fragment, "blk")?, 1);
-    assert_ne!(
-        io_location(fragment, "fragment_only")?,
-        io_location(fragment, "shared_value")?
-    );
     Ok(())
 }
 

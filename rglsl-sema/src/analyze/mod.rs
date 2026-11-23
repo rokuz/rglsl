@@ -72,6 +72,7 @@ pub struct Options {
     pub spirv_version: Option<(u8, u8)>,
     pub end_of_input: Option<u32>,
     pub require_bindings: bool,
+    pub require_locations: bool,
     pub specialize_work_group_size: bool,
 }
 
@@ -84,6 +85,7 @@ impl Options {
             spirv_version: None,
             end_of_input: None,
             require_bindings: false,
+            require_locations: false,
             specialize_work_group_size: false,
         }
     }

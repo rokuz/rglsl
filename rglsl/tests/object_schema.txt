@@ -1,4 +1,4 @@
-FORMAT_VERSION 39
+FORMAT_VERSION 40
 AddressSpace fd71764f652ff65a
 AmdBarycentric 74eb27f50e4d760c
 Arena b0a0ae77a55d57a8
@@ -11,7 +11,6 @@ Barrier 66789154d806c984
 BarrierPhase 83cb05a22727e923
 BinaryOperator b84c4137e5179019
 Binding a944954b8ee524f3
-BindingAssignment d3edd863b0cf0c55
 Block 7e56b94e00455f0d
 BlockDeclaration b15ed7b914a7e472
 BlockMatchMetric f7038e858013945f
@@ -68,7 +67,7 @@ GeometryInfo ab5313a01371953e
 GeometryInputPrimitive 1fc1697c9f2bdfee
 GeometryOutputPrimitive f9cd94ab298c1ea5
 GlobalOrArgument 76bca149f152e4de
-GlobalSymbol 5d22eaf715670857
+GlobalSymbol 5b7e9608019281c7
 GlobalVariable c850e2a175f94f2c
 Handle b9ff4851906d53fb
 HeapMember 0689579b05e06cc3

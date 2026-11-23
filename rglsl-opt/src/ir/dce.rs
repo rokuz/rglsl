@@ -19,11 +19,8 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
 }
 
 fn dce(module: &mut Module, context: Context) -> Result<bool, String> {
-    let complete = context.whole_program();
-    let mut changed = sweep_functions(module, complete, context.keeps_variables())?;
-    if complete {
-        changed |= sweep_module(module)?;
-    }
+    let mut changed = sweep_functions(module, context.keeps_variables())?;
+    changed |= sweep_module(module)?;
     Ok(changed)
 }
 
@@ -706,11 +703,11 @@ impl<'m> Marker<'m> {
     }
 }
 
-fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<bool, String> {
+fn sweep_functions(module: &mut Module, debug: bool) -> Result<bool, String> {
     let tracked: Vec<bool> = module
         .global_variables
         .iter()
-        .map(|(_, global)| complete && global.space == AddressSpace::Private)
+        .map(|(_, global)| global.space == AddressSpace::Private)
         .collect();
     let functions: Vec<&Function> = module.all_functions().collect();
     let mut marker = Marker {

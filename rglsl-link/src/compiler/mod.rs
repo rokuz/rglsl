@@ -354,9 +354,6 @@ pub(crate) fn write_spirv(
     });
     let mut flags =
         spv::WriterFlags::LABEL_VARYINGS | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE;
-    if options.export_functions {
-        flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
-    }
     if options.debug_info != DebugInfo::Stripped {
         flags |= spv::WriterFlags::DEBUG;
     }

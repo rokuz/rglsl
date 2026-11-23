@@ -1,22 +1,18 @@
 use rglsl::{Function, Module, Statement};
 
-use crate::Context;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Summary {
     pub calls: bool,
     pub loops: bool,
     pub local_variables: bool,
-    pub whole_program: bool,
 }
 
 impl Summary {
-    pub fn of(module: &Module, context: Context) -> Self {
+    pub fn of(module: &Module) -> Self {
         let mut summary = Self {
             calls: false,
             loops: false,
             local_variables: false,
-            whole_program: context.whole_program(),
         };
         for function in module.all_functions() {
             summary.add(function);

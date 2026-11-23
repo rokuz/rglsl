@@ -332,7 +332,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        let Some(main) = main.filter(|_| !self.options.keep_uncalled) else {
+        let Some(main) = main else {
             return Ok(FunctionOrder {
                 reached: order,
                 unreached: Vec::new(),

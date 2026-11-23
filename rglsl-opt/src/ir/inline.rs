@@ -3,7 +3,7 @@ mod returns;
 
 use rglsl::{Expression, Function, FunctionControl, Handle, Module, Statement};
 
-use crate::{Changed, Context, Inlining, OptError, Session};
+use crate::{Changed, Inlining, OptError, Session};
 use copy::Inliner;
 use returns::{Lowered, lower};
 
@@ -12,8 +12,7 @@ const FLOOR: u64 = 1 << 18;
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
     let inlining = session.profile.parameters.inlining;
-    let context = session.context;
-    session.rewrite(|module| inline(module, inlining, context))
+    session.rewrite(|module| inline(module, inlining))
 }
 
 pub(crate) struct Plan {
@@ -76,8 +75,8 @@ fn ends_invocation(statement: &Statement) -> bool {
     )
 }
 
-fn inline(module: &mut Module, inlining: Inlining, context: Context) -> Result<bool, String> {
-    let Some(plan) = plan(module, inlining, !context.whole_program()) else {
+fn inline(module: &mut Module, inlining: Inlining) -> Result<bool, String> {
+    let Some(plan) = plan(module, inlining) else {
         return Ok(false);
     };
     apply(module, &plan)
@@ -92,11 +91,11 @@ struct CallGraph {
 }
 
 impl CallGraph {
-    fn of(module: &Module, all_roots: bool) -> Self {
+    fn of(module: &Module) -> Self {
         let count = module.functions.len();
         let mut graph = Self {
             sites: vec![0; count],
-            pinned: vec![all_roots; count],
+            pinned: vec![false; count],
             kills: vec![false; count],
             callees: vec![Vec::new(); count],
             total: 0,
@@ -154,14 +153,14 @@ impl CallGraph {
     }
 }
 
-fn plan(module: &mut Module, inlining: Inlining, all_roots: bool) -> Option<Plan> {
+fn plan(module: &mut Module, inlining: Inlining) -> Option<Plan> {
     let CallGraph {
         sites,
         pinned,
         mut kills,
         callees,
         total,
-    } = CallGraph::of(module, all_roots);
+    } = CallGraph::of(module);
     let count = module.functions.len();
     let mut full = vec![0u64; count];
     let mut lowered: Vec<Option<Lowered>> = Vec::with_capacity(count);

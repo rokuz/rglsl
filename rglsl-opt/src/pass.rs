@@ -46,7 +46,7 @@ pub static PASSES: &[Pass] = &[
     Pass {
         name: "lto-io",
         scope: Scope::Program,
-        applies: |summary| summary.whole_program,
+        applies: |_| true,
         run: crate::ir::lto_io::run,
         counterpart: &[
             "--lto",

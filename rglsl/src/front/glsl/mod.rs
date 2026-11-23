@@ -43,38 +43,15 @@ pub struct Options {
     /// ```
     /// for each key value pair in the map.
     pub defines: FastHashMap<String, String>,
-    /// Give uniform and buffer blocks, samplers, textures and images that have
-    /// no `binding` layout qualifier a binding, instead of rejecting them.
-    ///
-    /// The assignment is glslang's (`--auto-map-bindings`): a resource that
-    /// code reachable from `main` uses gets the lowest binding in its set that
-    /// no other resource has, in declaration order; explicit bindings are
-    /// reserved first. A resource that is not used gets binding 0.
-    pub auto_map_bindings: bool,
-    /// Give stage inputs and outputs that have no `location` layout qualifier
-    /// a location, instead of rejecting them.
-    ///
-    /// The assignment is glslang's (`--auto-map-locations`): inputs and
-    /// outputs are numbered separately, in declaration order, each variable
-    /// taking as many locations as its type needs. As in glslang, explicit
-    /// locations are not taken into account, so they can overlap automatic
-    /// ones.
-    pub auto_map_locations: bool,
     pub spirv_version: Option<(u8, u8)>,
     pub library: bool,
-    pub hlsl_offsets: bool,
     pub debug_info: bool,
     pub source_name: Option<String>,
-    pub keep_uncalled: bool,
-    pub resource_set: Option<u32>,
-    pub binding_shifts: crate::proc::BindingShifts,
     pub preamble: Option<String>,
-    pub export_functions: bool,
     pub limits: ResourceLimits,
     pub invert_y: bool,
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
-    pub auto_sampled_textures: bool,
     pub builtin_tables: Arc<dyn BuiltinTables + Send + Sync>,
 }
 
@@ -83,23 +60,15 @@ impl From<ShaderStage> for Options {
         Options {
             stage,
             defines: FastHashMap::default(),
-            auto_map_bindings: false,
-            auto_map_locations: false,
             spirv_version: None,
             library: false,
-            hlsl_offsets: false,
             debug_info: false,
             source_name: None,
-            keep_uncalled: false,
-            resource_set: None,
-            binding_shifts: crate::proc::BindingShifts::default(),
             preamble: None,
-            export_functions: false,
             limits: ResourceLimits::default(),
             invert_y: false,
             nan_clamp: false,
             discard_is_terminate: false,
-            auto_sampled_textures: false,
             builtin_tables: Arc::new(FreshTables),
         }
     }

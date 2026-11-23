@@ -68,15 +68,9 @@ pub enum DebugLevel {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Context {
     pub debug: DebugLevel,
-    pub export_functions: bool,
-    pub unlinked: bool,
 }
 
 impl Context {
-    pub const fn whole_program(self) -> bool {
-        !self.unlinked && !self.export_functions
-    }
-
     pub const fn keeps_variables(self) -> bool {
         matches!(self.debug, DebugLevel::Variables)
     }

@@ -25,11 +25,7 @@
 
 #define RGLSL_REFLECT_ALL_IO_VARIABLES (1 << 6)
 
-#define RGLSL_REFLECT_SHARED_STD140_UBO (1 << 7)
-
-#define RGLSL_REFLECT_SHARED_STD140_SSBO (1 << 8)
-
-#define RGLSL_ABI_VERSION 2
+#define RGLSL_ABI_VERSION 3
 
 typedef struct rglsl_blob rglsl_blob;
 
@@ -66,8 +62,6 @@ typedef uint32_t rglsl_severity;
 typedef uint32_t rglsl_opt_level;
 
 typedef uint32_t rglsl_target_gpu;
-
-typedef uint32_t rglsl_resource;
 
 typedef uint32_t rglsl_disassembly;
 
@@ -143,20 +137,6 @@ typedef uint32_t rglsl_disassembly;
 
 #define RGLSL_TARGET_GPU_UNIVERSAL_MOBILE 3
 
-#define RGLSL_RESOURCE_SAMPLER 0
-
-#define RGLSL_RESOURCE_TEXTURE 1
-
-#define RGLSL_RESOURCE_IMAGE 2
-
-#define RGLSL_RESOURCE_UNIFORM_BUFFER 3
-
-#define RGLSL_RESOURCE_STORAGE_BUFFER 4
-
-#define RGLSL_RESOURCE_COMBINED_SAMPLER 5
-
-#define RGLSL_RESOURCE_ACCELERATION_STRUCTURE 6
-
 #define RGLSL_DISASSEMBLY_GLSLANG 0
 
 #define RGLSL_DISASSEMBLY_STANDARD 1
@@ -188,12 +168,6 @@ rglsl_result rglsl_compile_options_add_include(rglsl_compile_options *options,
 
 rglsl_result rglsl_compile_options_add_include_dir(rglsl_compile_options *options,
                                                    const char *directory);
-
-rglsl_result rglsl_compile_options_set_auto_map_bindings(rglsl_compile_options *options,
-                                                         bool enabled);
-
-rglsl_result rglsl_compile_options_set_auto_map_locations(rglsl_compile_options *options,
-                                                          bool enabled);
 
 rglsl_result rglsl_compile_options_set_debug_info(rglsl_compile_options *options,
                                                   rglsl_debug_info level);
@@ -246,12 +220,6 @@ rglsl_result rglsl_program_options_create(rglsl_program_options **options);
 
 void rglsl_program_options_destroy(rglsl_program_options *options);
 
-rglsl_result rglsl_program_options_set_auto_map_bindings(rglsl_program_options *options,
-                                                         bool enabled);
-
-rglsl_result rglsl_program_options_set_auto_map_locations(rglsl_program_options *options,
-                                                          bool enabled);
-
 rglsl_result rglsl_program_options_set_debug_info(rglsl_program_options *options,
                                                   rglsl_debug_info level);
 
@@ -298,33 +266,16 @@ rglsl_result rglsl_diagnostics_location(const rglsl_diagnostics *diagnostics,
 rglsl_result rglsl_compile_options_set_file_system_includes(rglsl_compile_options *options,
                                                             bool enabled);
 
-rglsl_result rglsl_compile_options_set_keep_uncalled(rglsl_compile_options *options, bool enabled);
-
-rglsl_result rglsl_compile_options_set_hlsl_offsets(rglsl_compile_options *options, bool enabled);
-
-rglsl_result rglsl_compile_options_set_export_functions(rglsl_compile_options *options,
-                                                        bool enabled);
-
 rglsl_result rglsl_compile_options_set_suppress_warnings(rglsl_compile_options *options,
                                                          bool enabled);
 
-rglsl_result rglsl_program_options_set_link(rglsl_program_options *options, bool enabled);
-
 rglsl_result rglsl_program_options_set_generate_spirv(rglsl_program_options *options, bool enabled);
-
-rglsl_result rglsl_program_options_set_keep_uncalled(rglsl_program_options *options, bool enabled);
-
-rglsl_result rglsl_program_options_set_export_functions(rglsl_program_options *options,
-                                                        bool enabled);
 
 rglsl_result rglsl_program_options_set_suppress_warnings(rglsl_program_options *options,
                                                          bool enabled);
 
 rglsl_result rglsl_compile_options_set_enhanced_messages(rglsl_compile_options *options,
                                                          bool enabled);
-
-rglsl_result rglsl_compile_options_set_auto_sampled_textures(rglsl_compile_options *options,
-                                                             bool enabled);
 
 rglsl_result rglsl_compile_options_set_invert_y(rglsl_compile_options *options, bool enabled);
 
@@ -358,9 +309,6 @@ rglsl_result rglsl_compile_options_add_undefine(rglsl_compile_options *options, 
 rglsl_result rglsl_compile_options_add_preamble_text(rglsl_compile_options *options,
                                                      const char *text);
 
-rglsl_result rglsl_compile_options_add_resource_set_binding(rglsl_compile_options *options,
-                                                            const char *value);
-
 rglsl_result rglsl_compile_options_set_entry_point(rglsl_compile_options *options,
                                                    const char *name);
 
@@ -368,28 +316,8 @@ rglsl_result rglsl_compile_options_set_vulkan_version(rglsl_compile_options *opt
                                                       uint32_t major,
                                                       uint32_t minor);
 
-rglsl_result rglsl_compile_options_set_binding_shift(rglsl_compile_options *options,
-                                                     rglsl_resource resource,
-                                                     uint32_t base);
-
-rglsl_result rglsl_compile_options_set_binding_shift_for_set(rglsl_compile_options *options,
-                                                             rglsl_resource resource,
-                                                             uint32_t set,
-                                                             uint32_t base);
-
 rglsl_result rglsl_compile_options_set_limits(rglsl_compile_options *options,
                                               const rglsl_limits *limits);
-
-rglsl_result rglsl_program_options_set_binding_shift(rglsl_program_options *options,
-                                                     rglsl_stage stage,
-                                                     rglsl_resource resource,
-                                                     uint32_t base);
-
-rglsl_result rglsl_program_options_set_binding_shift_for_set(rglsl_program_options *options,
-                                                             rglsl_stage stage,
-                                                             rglsl_resource resource,
-                                                             uint32_t set,
-                                                             uint32_t base);
 
 rglsl_result rglsl_program_options_set_command_line(rglsl_program_options *options,
                                                     const char *command_line);

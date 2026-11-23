@@ -1,15 +1,14 @@
 use alloc::{format, string::String, vec, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
-use rglsl_types::extension::Extension;
 use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{
-    BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
-    InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
-    SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
+    BlockInstance, BlockStructure, Declaration, DeclarationKind, InitDeclarator,
+    InitDeclaratorList, Initializer, InterpolationQualifier, Node, SingleTypeQualifier, Spanned,
+    StorageQualifier, TypeQualifier,
 };
 use rglsl_sema::builtins::variables::{self, BlockSize, BuiltinVariable, VariableFlags};
-use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
+use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
     TypeKind,
@@ -272,177 +271,8 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
 }
 
 impl<'a> Lowerer<'a> {
-    fn glsl_location_count(&self, ty: &GlslType) -> u32 {
-        enum Task<'t> {
-            Visit(&'t GlslType),
-            Sum(&'t GlslType, usize),
-        }
-        let wide = |scalar: Scalar, size: u8| u32::from(scalar == Scalar::Double && size > 2) + 1;
-        let arrayed = |ty: &GlslType, element: u32| {
-            ty.dimensions()
-                .iter()
-                .map(|size| match *size {
-                    GlslArraySize::Sized(length) => length,
-                    GlslArraySize::Specialized(_) | GlslArraySize::Unsized => 1,
-                })
-                .fold(element, u32::saturating_mul)
-        };
-        let mut tasks = alloc::vec![Task::Visit(ty)];
-        let mut counts: Vec<u32> = Vec::new();
-        while let Some(task) = tasks.pop() {
-            match task {
-                Task::Visit(ty) => {
-                    let members = match ty.kind {
-                        TypeKind::Struct(id) => self
-                            .analysis
-                            .types
-                            .structure(id)
-                            .map(|structure| structure.members.as_slice()),
-                        TypeKind::Block(id) => self
-                            .analysis
-                            .types
-                            .block(id)
-                            .map(|block| block.members.as_slice()),
-                        _ => None,
-                    };
-                    if let Some(members) = members {
-                        tasks.push(Task::Sum(ty, members.len()));
-                        tasks.extend(members.iter().rev().map(|member| Task::Visit(&member.ty)));
-                        continue;
-                    }
-                    let element = match ty.kind {
-                        TypeKind::Vector { scalar, size } => wide(scalar, size),
-                        TypeKind::Matrix {
-                            scalar,
-                            columns,
-                            rows,
-                        } => u32::from(columns).saturating_mul(wide(scalar, rows)),
-                        _ => 1,
-                    };
-                    counts.push(arrayed(ty, element));
-                }
-                Task::Sum(ty, count) => {
-                    let start = counts.len().saturating_sub(count);
-                    let element = counts.drain(start..).fold(0, u32::saturating_add);
-                    counts.push(arrayed(ty, element));
-                }
-            }
-        }
-        counts.pop().unwrap_or(1)
-    }
-
     pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
         super::function::FunctionLowerer::new(self).global_ref(symbol, at)
-    }
-
-    pub(super) fn reserve_explicit_locations(&mut self) {
-        let analysis = self.analysis;
-        for declaration in &self.unit.external_declarations {
-            let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
-                continue;
-            };
-            let symbols: Vec<SymbolId> = match declaration.kind {
-                DeclarationKind::InitDeclaratorList(ref list) => list
-                    .declarators
-                    .iter()
-                    .filter_map(|declarator| analysis.declarations.get(&declarator.id).copied())
-                    .collect(),
-                DeclarationKind::Block { .. } => analysis
-                    .declarations
-                    .get(&declaration.id)
-                    .copied()
-                    .into_iter()
-                    .collect(),
-                _ => Vec::new(),
-            };
-            for symbol in symbols {
-                let Some(variable) = self.variable(symbol) else {
-                    continue;
-                };
-                if variable.origin == Origin::BuiltIn {
-                    continue;
-                }
-                let slot = match variable.qualifiers.storage {
-                    Storage::In => 0,
-                    Storage::Out => 1,
-                    _ => continue,
-                };
-                let ranges = self.explicit_ranges(variable);
-                self.explicit_locations[slot].extend(ranges);
-            }
-        }
-    }
-
-    fn explicit_ranges(&self, variable: &Variable) -> Vec<(u32, u32)> {
-        let location_of = |qualifiers: &Qualifiers| {
-            qualifiers
-                .layout_entry(LayoutId::Location)
-                .and_then(|entry| entry.value.constant())
-                .and_then(|value| u32::try_from(value).ok())
-        };
-        let mut ranges = Vec::new();
-        let mut push = |start: u32, count: u32| ranges.push((start, start.saturating_add(count)));
-        let block = match variable.ty.kind {
-            TypeKind::Block(id) => self.analysis.types.block(id),
-            _ => None,
-        };
-        match (block, variable.ty.kind) {
-            (Some(block), TypeKind::Block(id)) => {
-                let mut next = location_of(&block.qualifiers);
-                for (index, member) in (0_u32..).zip(&block.members) {
-                    let mut member_ty = member.ty.clone();
-                    if member_ty.outer_size() == Some(GlslArraySize::Unsized) {
-                        let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
-                        member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
-                    }
-                    let count = match member_ty.element_type() {
-                        Some(element)
-                            if member.qualifiers.flags.contains(QualifierFlags::PER_VIEW) =>
-                        {
-                            self.glsl_location_count(&element)
-                        }
-                        _ => self.glsl_location_count(&member_ty),
-                    };
-                    let start = location_of(&member.qualifiers).or(next);
-                    if let Some(start) = start {
-                        push(start, count);
-                    }
-                    next = start.map(|start| start.saturating_add(count));
-                }
-            }
-            _ => {
-                if let Some(start) = location_of(&variable.qualifiers) {
-                    let element = if self.is_per_vertex_io(&variable.qualifiers) {
-                        variable.ty.element_type()
-                    } else {
-                        None
-                    };
-                    let element = if variable.qualifiers.flags.contains(QualifierFlags::PER_VIEW) {
-                        element.and_then(|element| element.element_type())
-                    } else {
-                        element
-                    };
-                    push(
-                        start,
-                        self.glsl_location_count(element.as_ref().unwrap_or(&variable.ty)),
-                    );
-                }
-            }
-        }
-        ranges
-    }
-
-    fn auto_location(&mut self, slot: usize, count: u32) -> u32 {
-        let mut start = self.next_location[slot];
-        let end = |start: u32| start.saturating_add(count.max(1));
-        while let Some(&(_, taken)) = self.explicit_locations[slot]
-            .iter()
-            .find(|&&(from, to)| from < end(start) && start < to)
-        {
-            start = taken;
-        }
-        self.next_location[slot] = start.saturating_add(count);
-        start
     }
 
     pub(super) fn global_declaration(&mut self, declaration: &'a Declaration) -> Result<()> {
@@ -902,7 +732,6 @@ impl<'a> Lowerer<'a> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let qualifiers = &variable.qualifiers;
         let input = qualifiers.storage == Storage::In;
-        let per_vertex = self.is_per_vertex_io(qualifiers);
         if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
             return Err(semantic("invariant can only apply to an output", at));
         }
@@ -923,17 +752,6 @@ impl<'a> Lowerer<'a> {
             declared.set_outer_size(GlslArraySize::Sized(size));
         }
         let ty = self.ir_type(&declared, at)?;
-        let element = match (per_vertex, &self.module.types[ty].inner) {
-            (true, &TypeInner::Array { base, .. }) => base,
-            _ => ty,
-        };
-        let element = match (
-            qualifiers.flags.contains(QualifierFlags::PER_VIEW),
-            &self.module.types[element].inner,
-        ) {
-            (true, &TypeInner::Array { base, .. }) => base,
-            _ => element,
-        };
         let per_primitive = self.per_primitive_binding(qualifiers);
         if qualifiers
             .spirv_decorations
@@ -973,16 +791,11 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(());
         }
-        let automatic_location = qualifiers.layout_entry(LayoutId::Location).is_none();
         let location = match qualifiers
             .layout_entry(LayoutId::Location)
             .and_then(|e| e.value.constant())
         {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
-            None if self.options.auto_map_locations => {
-                let count = location_count(&self.module, element);
-                self.auto_location(usize::from(!input), count)
-            }
             None => {
                 return Err(semantic(
                     "SPIR-V requires a location for user inputs and outputs",
@@ -1059,9 +872,6 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
-        if automatic_location {
-            self.automatic_locations.push(handle);
-        }
         if input {
             self.passthrough(handle, qualifiers);
             self.inputs.insert(name);
@@ -1092,11 +902,7 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    fn binding(
-        &mut self,
-        qualifiers: &Qualifiers,
-        at: Span,
-    ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
+    fn binding(qualifiers: &Qualifiers, at: Span) -> Result<ResourceBinding> {
         let value = |id: LayoutId| -> Result<Option<u32>> {
             match qualifiers.layout_entry(id).and_then(|e| e.value.constant()) {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
@@ -1104,28 +910,11 @@ impl<'a> Lowerer<'a> {
             }
         };
         let binding = value(LayoutId::Binding)?;
-        let set = value(LayoutId::Set)?.or(self.options.resource_set);
-        match binding {
-            Some(binding) => Ok((
-                Some(ResourceBinding {
-                    group: set.unwrap_or(0),
-                    binding,
-                }),
-                None,
-            )),
-            None if self.options.auto_map_bindings => Ok((None, Some(set))),
-            None if self
-                .analysis
-                .extensions
-                .contains(Extension::ExtDescriptorHeap) =>
-            {
-                Ok((None, None))
-            }
-            None => Err(semantic(
-                "uniform/buffer blocks and opaque uniforms require layout(binding=X)",
-                at,
-            )),
-        }
+        let set = value(LayoutId::Set)?;
+        Ok(ResourceBinding {
+            group: set.unwrap_or(0),
+            binding: binding.unwrap_or(0),
+        })
     }
 
     fn resource(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
@@ -1218,7 +1007,7 @@ impl<'a> Lowerer<'a> {
                 ));
             }
         }
-        let (binding, unbound) = self.binding(qualifiers, at)?;
+        let binding = Some(Self::binding(qualifiers, at)?);
         let input_attachment_index = match qualifiers
             .layout_entry(LayoutId::InputAttachmentIndex)
             .and_then(|entry| entry.value.constant())
@@ -1248,9 +1037,6 @@ impl<'a> Lowerer<'a> {
             },
             at,
         );
-        if let Some(set) = unbound {
-            self.unbound.push((handle, set));
-        }
         self.globals.insert(symbol, GlobalRef::Variable(handle));
         Ok(())
     }
@@ -1386,10 +1172,10 @@ impl<'a> Lowerer<'a> {
         } else {
             AddressSpace::Uniform
         };
-        let (binding, unbound) = if push_constant || shader_record {
-            (None, None)
+        let binding = if push_constant || shader_record {
+            None
         } else {
-            self.binding(qualifiers, at)?
+            Some(Self::binding(qualifiers, at)?)
         };
         if block
             .members
@@ -1437,9 +1223,6 @@ impl<'a> Lowerer<'a> {
             },
             at,
         );
-        if let Some(set) = unbound {
-            self.unbound.push((handle, set));
-        }
         self.globals.insert(symbol, GlobalRef::Variable(handle));
         Ok(())
     }
@@ -1713,20 +1496,6 @@ impl<'a> Lowerer<'a> {
             }
         }
         let member_located = member_locations.iter().any(Option::is_some);
-        let per_block = members
-            .iter()
-            .map(|member| self.member_location_count(member))
-            .fold(0, u32::saturating_add);
-        let elements = block_dimensions
-            .iter()
-            .map(|size| match *size {
-                GlslArraySize::Sized(size) => size,
-                _ => 1,
-            })
-            .fold(1, u32::saturating_mul);
-        let total = per_block.saturating_mul(elements);
-        let slot = usize::from(!input);
-        let automatic_location = !member_located && block_location.is_none();
         let io = if member_located {
             if arrayed {
                 return Err(semantic(
@@ -1752,20 +1521,13 @@ impl<'a> Lowerer<'a> {
                 }
                 next = Some(location.saturating_add(self.member_location_count(member)));
             }
-            if self.options.auto_map_locations {
-                self.auto_location(slot, total);
-            }
             None
         } else {
-            let start = match block_location {
-                Some(location) => location,
-                None if self.options.auto_map_locations => self.auto_location(slot, total),
-                None => {
-                    return Err(semantic(
-                        "SPIR-V requires a location for user inputs and outputs",
-                        at,
-                    ));
-                }
+            let Some(start) = block_location else {
+                return Err(semantic(
+                    "SPIR-V requires a location for user inputs and outputs",
+                    at,
+                ));
             };
             if members.iter().any(|member| {
                 matches!(
@@ -1843,9 +1605,6 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
-        if automatic_location {
-            self.automatic_locations.push(handle);
-        }
         if outer.flags.contains(QualifierFlags::PER_TASK) {
             self.task_memory.push(handle);
         }
@@ -2296,7 +2055,7 @@ impl<'a> Lowerer<'a> {
                 Span::UNDEFINED,
             ));
         }
-        if !self.object && !self.options.export_functions {
+        if !self.object {
             for (handle, conflict) in
                 crate::proc::SharedBlocks::of(&self.module.global_variables, true).conflicts()
             {
@@ -2316,7 +2075,6 @@ impl<'a> Lowerer<'a> {
         }
         self.check_shared_layouts();
         self.finish_xfb();
-        self.assign_bindings();
     }
 
     fn check_shared_layouts(&mut self) {
@@ -2397,63 +2155,6 @@ impl<'a> Lowerer<'a> {
                 at,
             )),
             _ => Err(semantic("invariant can only apply to an output", at)),
-        }
-    }
-
-    fn assign_bindings(&mut self) {
-        self.automatic_bindings.clone_from(&self.unbound);
-        let mut unbound = core::mem::take(&mut self.unbound);
-        let shifts = &self.options.binding_shifts;
-        shifts.shift_explicit(
-            &mut self.module,
-            &unbound.iter().map(|&(handle, _)| handle).collect(),
-        );
-        if unbound.is_empty() {
-            return;
-        }
-        unbound.sort_by_key(|&(_, set)| set.is_none());
-        let mut live = crate::compact::live_global_variables(&self.module);
-        let functions: Vec<&crate::Function> = if self.object && self.reachable.is_some() {
-            self.reachable_functions().collect()
-        } else {
-            self.module
-                .functions
-                .iter()
-                .map(|(_, function)| function)
-                .collect()
-        };
-        let entries = self.module.entry_points.iter().map(|entry| &entry.function);
-        for function in functions.into_iter().chain(entries) {
-            for (_, expression) in function.expressions.iter() {
-                if let crate::Expression::GlobalVariable(global) = *expression {
-                    live.insert(global);
-                }
-            }
-        }
-        let mut taken: alloc::collections::BTreeMap<u32, alloc::collections::BTreeSet<u32>> =
-            alloc::collections::BTreeMap::new();
-        for (_, global) in self.module.global_variables.iter() {
-            if let Some(ref binding) = global.binding {
-                taken
-                    .entry(binding.group)
-                    .or_default()
-                    .insert(binding.binding);
-            }
-        }
-        for (handle, set) in unbound {
-            let group = set.unwrap_or(0);
-            let binding = if live.contains(handle) {
-                let base =
-                    shifts.base_of(&self.module, &self.module.global_variables[handle], group);
-                let used = taken.entry(group).or_default();
-                let free = crate::proc::free_binding(used, base);
-                used.insert(free);
-                free
-            } else {
-                0
-            };
-            self.module.global_variables.get_mut(handle).binding =
-                Some(ResourceBinding { group, binding });
         }
     }
 }

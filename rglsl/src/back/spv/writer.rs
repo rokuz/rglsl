@@ -939,12 +939,11 @@ impl Writer {
         };
 
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
-        let references =
-            if interface.is_none() && !self.flags.contains(WriterFlags::EXPORT_FUNCTIONS) {
-                super::reference::reference_arguments(ir_function, info, &ir_module.types)
-            } else {
-                vec![None; ir_function.arguments.len()]
-            };
+        let references = if interface.is_none() {
+            super::reference::reference_arguments(ir_function, info, &ir_module.types)
+        } else {
+            vec![None; ir_function.arguments.len()]
+        };
         let mut argument_locals = Vec::new();
 
         for (index, argument) in ir_function.arguments.iter().enumerate() {
@@ -1055,22 +1054,6 @@ impl Writer {
             function_control,
             function_type,
         ));
-
-        if self.flags.contains(WriterFlags::EXPORT_FUNCTIONS) && interface.is_none() {
-            let mut operands =
-                super::helpers::string_to_words(ir_function.name.as_deref().unwrap_or_default());
-            let import = ir_function.linkage.is_import();
-            operands.push(if import {
-                spirv::LinkageType::Import as u32
-            } else {
-                spirv::LinkageType::Export as u32
-            });
-            self.decorate(function_id, spirv::Decoration::LinkageAttributes, &operands);
-            if import {
-                function.to_words(&mut self.logical_layout.function_definitions)?;
-                return Ok(function_id);
-            }
-        }
 
         if interface.is_some() {
             function.entry_point_context = Some(ep_context);
@@ -3982,12 +3965,10 @@ impl Writer {
     ) -> Result<(), Error> {
         self.reset();
 
-        let exporting = self.flags.contains(WriterFlags::EXPORT_FUNCTIONS);
         if let Some(import) = ir_module
             .functions
             .iter()
             .map(|(_, function)| function)
-            .filter(|_| !exporting)
             .chain(ir_module.entry_points.iter().map(|entry| &entry.function))
             .find(|function| function.linkage.is_import())
         {

@@ -4,8 +4,8 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use rglsl_link::{
-    BindingShifts, Build, CompileOptions, Compiler, DiagnosticFormat, Diagnostics, Input,
-    ObjectModule, ProgramOptions, ResourceLimits, ShaderStage, Source,
+    Build, CompileOptions, Compiler, DiagnosticFormat, Diagnostics, Input, ObjectModule,
+    ProgramOptions, ResourceLimits, ShaderStage, Source,
 };
 
 use crate::args::{EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Options, VersionDump};
@@ -108,9 +108,6 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
     if options.object {
         return session.objects();
     }
-    if options.no_link && !options.preprocess && (options.spirv || options.link) {
-        return session.compile_only();
-    }
     if options.preprocess || options.link {
         return session.compile_and_link();
     }
@@ -177,36 +174,6 @@ impl<'a> Session<'a> {
             .collect()
     }
 
-    fn shifts(&self, stage: Option<ShaderStage>) -> BindingShifts {
-        let mut shifts = BindingShifts::default();
-        for shift in &self.options.shifts {
-            if shift.stage.is_some() && shift.stage != stage {
-                continue;
-            }
-            let index = shift.class.index();
-            if let Some(base) = shift.base
-                && let Some(slot) = shifts.base.get_mut(index)
-            {
-                *slot = base;
-            }
-            if let Some(per_set) = shifts.per_set.get_mut(index) {
-                for &(set, base) in &shift.per_set {
-                    per_set.entry(set).or_insert(base);
-                }
-            }
-        }
-        shifts
-    }
-
-    fn resource_set_values(&self, stage: Option<ShaderStage>) -> Vec<String> {
-        self.options
-            .resource_sets
-            .iter()
-            .filter(|set| set.stage.is_none() || set.stage == stage)
-            .flat_map(|set| set.values.iter().cloned())
-            .collect()
-    }
-
     fn compile_options(&self, unit: &Unit) -> CompileOptions {
         let options = self.options;
         let stage = unit.stage();
@@ -220,13 +187,6 @@ impl<'a> Session<'a> {
         compile.entry_point.clone_from(&options.entry_point);
         compile.vulkan_version = options.vulkan_version();
         compile.spirv_version = options.target_spirv();
-        compile.auto_map_bindings = options.auto_map_bindings;
-        compile.auto_map_locations = options.auto_map_locations;
-        compile.binding_shifts = self.shifts(stage);
-        compile.resource_set_binding = self.resource_set_values(stage);
-        compile.keep_uncalled = options.keep_uncalled;
-        compile.hlsl_offsets = options.hlsl_offsets;
-        compile.export_functions = options.no_link && options.spirv;
         compile.suppress_warnings = options.suppress_warnings;
         compile.debug_info = options.debug;
         compile.limits = self.limits;
@@ -234,23 +194,13 @@ impl<'a> Session<'a> {
         compile.nan_clamp = options.nan_clamp;
         compile.discard_is_terminate = options.discard_is_terminate;
         compile.enhanced_messages = options.enhanced_messages;
-        compile.auto_sampled_textures = options.auto_sampled_textures;
         compile
     }
 
     fn program_options(&self) -> ProgramOptions {
         let options = self.options;
         ProgramOptions {
-            link: !options.no_link,
             generate_spirv: options.spirv,
-            auto_map_bindings: options.auto_map_bindings,
-            auto_map_locations: options.auto_map_locations,
-            binding_shifts: ShaderStage::ALL
-                .iter()
-                .map(|&stage| (stage, self.shifts(Some(stage))))
-                .collect(),
-            keep_uncalled: options.keep_uncalled,
-            export_functions: options.no_link,
             suppress_warnings: options.suppress_warnings || options.suppress_info,
             debug_info: options.debug,
             spirv_version: options.target_spirv(),
@@ -409,24 +359,6 @@ impl<'a> Session<'a> {
         {
             return Err(Exit::detailed(
                 "a library (a .glsl file without a stage) has no entry point; link it with a program, or compile it with --object",
-                unit.name.clone(),
-            ));
-        }
-        let code = self.build(&units)?;
-        if code == EXIT_SUCCESS {
-            self.write_depfile(&units)?;
-        }
-        Ok(code)
-    }
-
-    fn compile_only(&mut self) -> Result<i32, Exit> {
-        let units = self.load_all()?;
-        if let Some(unit) = units
-            .iter()
-            .find(|unit| !matches!(unit.class, Class::Stage(_)))
-        {
-            return Err(Exit::detailed(
-                "--no-link compiles shaders of a stage; a library or an object module has none",
                 unit.name.clone(),
             ));
         }

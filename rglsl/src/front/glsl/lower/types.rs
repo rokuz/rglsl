@@ -1074,8 +1074,7 @@ impl super::function::FunctionLowerer<'_, '_> {
         let analysis = self.lw.analysis;
         let block = analysis.types.block(id).ok_or_else(|| internal(span))?;
         let mut members = Vec::with_capacity(block.members.len());
-        let mut placer = MemberPlacer::new(&block.qualifiers, packing)
-            .with_hlsl_offsets(self.lw.options.hlsl_offsets);
+        let mut placer = MemberPlacer::new(&block.qualifiers, packing);
         let last = block.members.len().saturating_sub(1);
         let is_plain_ubo = block.storage == BlockStorage::Uniform
             && block.qualifiers.storage == rglsl_sema::scope::Storage::Uniform
@@ -1127,7 +1126,7 @@ impl super::function::FunctionLowerer<'_, '_> {
                 .lw
                 .type_layout(&member_ty, packing, member_row_major, span)?;
             let offset = placer
-                .place(&member.qualifiers, &member_ty, &layout, member_row_major)
+                .place(&member.qualifiers, &member_ty, &layout)
                 .ok_or_else(|| invalid_member(span))?;
             let ty = self.lw.apply_layout(ty, &layout, span)?;
             let memory_decorations = if block.storage == BlockStorage::Buffer {

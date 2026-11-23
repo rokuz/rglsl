@@ -157,7 +157,7 @@ void testSwizzleWrites(vec3 a) {
     a.zy++;
 }
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 void main() {
     testBinOpVecFloat(vec4(0), 1.0);
     testBinOpFloatVec(vec4(0), 1.0);

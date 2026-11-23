@@ -61,10 +61,7 @@ fn compile(
             validate_each: true,
             specialization: Vec::new(),
         },
-        Context {
-            debug,
-            ..Context::default()
-        },
+        Context { debug },
     )?;
     let options = spv::Options {
         lang_version: (1, 3),

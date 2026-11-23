@@ -29,35 +29,28 @@ fn writer_options() -> spv::Options<'static> {
     }
 }
 
-fn frontend_options(stage: ShaderStage, auto_map: bool) -> Options {
+fn frontend_options(stage: ShaderStage) -> Options {
     Options {
-        auto_map_bindings: auto_map,
-        auto_map_locations: auto_map,
         spirv_version: Some((1, 6)),
         ..Options::from(stage)
     }
 }
 
-fn direct(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u32>> {
+fn direct(stage: ShaderStage, source: &str) -> TestResult<Vec<u32>> {
     let module = Frontend::default()
-        .parse(&frontend_options(stage, auto_map), source)
+        .parse(&frontend_options(stage), source)
         .map_err(|errors| format!("{errors:?}"))?;
     let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     Ok(spv::write_vec(&module, &info, &writer_options(), None)?)
 }
 
-fn through_object(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u32>> {
+fn through_object(stage: ShaderStage, source: &str) -> TestResult<Vec<u32>> {
     let object = Frontend::default()
-        .compile(&frontend_options(stage, auto_map), source)
+        .compile(&frontend_options(stage), source)
         .map_err(|errors| format!("{errors:?}"))?;
     validate_object(&object)?;
     let object = decode(&encode(&object)?)?;
-    let options = LinkOptions {
-        auto_map_bindings: auto_map,
-        auto_map_locations: auto_map,
-        ..LinkOptions::default()
-    };
-    let linked = link_objects(&[object], &options)?;
+    let linked = link_objects(&[object], &LinkOptions::default())?;
     let [ref stage] = *linked.as_slice() else {
         return Err(format!("{} stages", linked.len()).into());
     };
@@ -134,9 +127,9 @@ fn summary(words: &[u32]) -> TestResult<Summary> {
     })
 }
 
-fn program(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u32>> {
+fn program(stage: ShaderStage, source: &str) -> TestResult<Vec<u32>> {
     let linked = rglsl_link::compile_program(
-        &frontend_options(stage, auto_map),
+        &frontend_options(stage),
         source,
         rglsl_pp::FileId(0),
         &mut rglsl_pp::NoIncluder,
@@ -149,12 +142,12 @@ fn program(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u
     )?)
 }
 
-fn assert_same(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult {
-    let direct = direct(stage, source, auto_map)?;
-    let linked = through_object(stage, source, auto_map)?;
+fn assert_same(stage: ShaderStage, source: &str) -> TestResult {
+    let direct = direct(stage, source)?;
+    let linked = through_object(stage, source)?;
     assert_eq!(summary(&direct)?, summary(&linked)?, "{source}");
     assert_eq!(direct, linked, "{source}");
-    assert_eq!(direct, program(stage, source, auto_map)?, "{source}");
+    assert_eq!(direct, program(stage, source)?, "{source}");
     Ok(())
 }
 
@@ -175,16 +168,16 @@ fn every_snapshot_input_compiles_to_the_same_words_on_every_path() -> TestResult
             continue;
         };
         let source = std::fs::read_to_string(&path)?;
-        let Ok(direct) = direct(stage, &source, true) else {
+        let Ok(direct) = direct(stage, &source) else {
             continue;
         };
         assert_eq!(
             direct,
-            through_object(stage, &source, true)?,
+            through_object(stage, &source)?,
             "{}",
             path.display()
         );
-        assert_eq!(direct, program(stage, &source, true)?, "{}", path.display());
+        assert_eq!(direct, program(stage, &source)?, "{}", path.display());
         compared += 1;
     }
     assert!(compared > 30, "only {compared} inputs compared");
@@ -211,7 +204,7 @@ void uncalled() {
 }
 void main() { first(); second(); }
 ";
-    assert_same(ShaderStage::Compute, source, false)?;
+    assert_same(ShaderStage::Compute, source)?;
     let object = compile(ShaderStage::Compute, false, source)?;
     let stage = only_stage(&[object])?;
     let queries = stage
@@ -231,7 +224,7 @@ layout(location = 0) out vec4 color;
 vec4 late() { return vec4(1.0); }
 void main() { color = vec4(0.0); return; color = late(); }
 ";
-    assert_same(ShaderStage::Fragment, source, false)?;
+    assert_same(ShaderStage::Fragment, source)?;
     let object = compile(ShaderStage::Fragment, false, source)?;
     let stage = only_stage(&[object])?;
     assert_eq!(stage.module.functions.len(), 1);
@@ -312,7 +305,6 @@ layout(local_size_x = 1) in;
 layout(binding = 0) buffer Block { float x[]; } block;
 void main() { block.x[1] = 2.0; }
 ",
-        false,
     )
 }
 
@@ -324,7 +316,7 @@ layout(buffer_reference, std430) buffer Node { Node next; uint value; };
 fn compile(stage: ShaderStage, library: bool, source: &str) -> TestResult<ObjectModule> {
     let options = Options {
         library,
-        ..frontend_options(stage, false)
+        ..frontend_options(stage)
     };
     Ok(Frontend::default()
         .compile(&options, source)
@@ -347,7 +339,6 @@ layout(std430, binding = 0) buffer Root {{ Node head; }} root;
 void main() {{ root.head.next.next.value = root.head.value; }}
 "
         ),
-        false,
     )
 }
 
@@ -405,7 +396,6 @@ layout(local_size_x_id = 0, local_size_y_id = 0) in;
 layout(std430, binding = 0) buffer Out { int value; } result;
 void main() { result.value = DIM * int(gl_WorkGroupSize.x); }
 ",
-        false,
     )
 }
 
@@ -425,7 +415,6 @@ const int list[2] = { six, six };
 layout(std430, binding = 0) buffer Out { vec4 v; int i; } result;
 void main() { result.v = splat; result.i = pair.b + list[1]; }
 ",
-        false,
     )
 }
 
@@ -438,7 +427,6 @@ fn unused_expressions_stay() -> TestResult {
 layout(local_size_x = 1) in;
 void main() { vec4 v = vec4(0.0); vec4(f16vec4(v)); }
 ",
-        false,
     )
 }
 
@@ -462,7 +450,6 @@ void main() {
     result.value = high[0] + low[1] + int(part[2] + whole[3]);
 }
 ",
-        false,
     )
 }
 
@@ -479,7 +466,6 @@ layout(max_vertices = 3, max_primitives = 1, triangles) out;
 int uncalled() { return gl_DrawIDARB + gl_ViewIndex; }
 void main() { SetMeshOutputsEXT(0u, 0u); }
 ",
-        false,
     )
 }
 
@@ -493,7 +479,6 @@ layout(std430, binding = 0) buffer Out { uint value; } result;
 void late() { result.value = gl_GlobalInvocationID.x; }
 void main() { result.value = 0u; return; late(); }
 ",
-        false,
     )
 }
 
@@ -530,23 +515,6 @@ void main() { color = vec4(depth()); }
     Ok(())
 }
 
-#[test]
-fn automatic_bindings_skip_resources_of_uncalled_functions() -> TestResult {
-    assert_same(
-        ShaderStage::Fragment,
-        "#version 450
-uniform sampler unused_sampler;
-uniform texture1D unused_texture;
-uniform sampler used_sampler;
-uniform texture1D used_texture;
-layout(location = 0) out vec4 color;
-vec4 uncalled() { return texture(sampler1D(unused_texture, unused_sampler), 0.5); }
-void main() { color = texture(sampler1D(used_texture, used_sampler), 0.5); }
-",
-        true,
-    )
-}
-
 const INVALID_HELPER: &str = "#extension GL_ARB_gpu_shader_fp64 : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : enable
 layout(location = 1) in flat f64vec2 shifted;
@@ -563,7 +531,6 @@ fn invalid_functions_nobody_calls_link() -> TestResult {
 void main() {{ color = vec4(1.0); }}
 "
         ),
-        false,
     )
 }
 
@@ -626,7 +593,6 @@ fn functions_nobody_calls_that_do_not_lower_link() -> TestResult {
 void main() {{ color = vec4(1.0); }}
 "
         ),
-        false,
     )
 }
 
@@ -682,7 +648,7 @@ fn libraries_report_lowering_errors_when_compiled() -> TestResult {
         for library in [true, false] {
             let options = Options {
                 library,
-                ..frontend_options(ShaderStage::Fragment, false)
+                ..frontend_options(ShaderStage::Fragment)
             };
             let Err(errors) = Frontend::default().compile(&options, &source) else {
                 return Err("a library with a lowering error compiled".into());
@@ -699,35 +665,6 @@ fn libraries_report_lowering_errors_when_compiled() -> TestResult {
 }
 
 #[test]
-fn kept_uncalled_functions_report_lowering_errors_when_compiled() -> TestResult {
-    let source = format!(
-        "#version 450
-{DOUBLE_DERIVATIVE}layout(location = 0) out vec4 color;
-void main() {{ color = vec4(1.0); }}
-"
-    );
-    let options = Options {
-        keep_uncalled: true,
-        ..frontend_options(ShaderStage::Fragment, false)
-    };
-    let Err(direct) = Frontend::default().parse(&options, &source) else {
-        return Err(
-            "the direct path accepted an uncalled lowering error with keep_uncalled".into(),
-        );
-    };
-    let Err(object) = Frontend::default().compile(&options, &source) else {
-        return Err(
-            "the object path accepted an uncalled lowering error with keep_uncalled".into(),
-        );
-    };
-    let messages = |errors: &rglsl::front::glsl::ParseErrors| -> Vec<String> {
-        errors.errors.iter().map(ToString::to_string).collect()
-    };
-    assert_eq!(messages(&direct), messages(&object));
-    Ok(())
-}
-
-#[test]
 fn functions_main_calls_report_lowering_errors_when_compiled() -> TestResult {
     let source = format!(
         "#version 450
@@ -735,7 +672,7 @@ fn functions_main_calls_report_lowering_errors_when_compiled() -> TestResult {
 void main() {{ color = vec4(float(steepness())); }}
 "
     );
-    let options = frontend_options(ShaderStage::Fragment, false);
+    let options = frontend_options(ShaderStage::Fragment);
     let Err(direct) = Frontend::default().parse(&options, &source) else {
         return Err("the direct path accepted the shader".into());
     };

@@ -921,8 +921,6 @@ bitflags::bitflags! {
         const CLAMP_FRAG_DEPTH = 0x10;
 
         const SMALL_TYPE_CAPABILITIES_BY_USE = 0x80;
-
-        const EXPORT_FUNCTIONS = 0x100;
     }
 }
 

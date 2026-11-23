@@ -1,5 +1,5 @@
 #version 450
-layout(xfb_buffer = 0, xfb_offset = 16) out vec4 second;
+layout(location = 1, xfb_buffer = 0, xfb_offset = 16) out vec4 second;
 
 void capture(vec4 p)
 {

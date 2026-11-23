@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use rglsl::ShaderStage;
 use rglsl::front::glsl;
-use rglsl::proc::{BindingShifts, ResourceClass};
 use rglsl_opt::{DebugLevel, OptOptions};
 use rglsl_sema::ResourceLimits;
 
@@ -79,18 +78,6 @@ pub const fn spirv_version_of_vulkan(vulkan: (u8, u8)) -> (u8, u8) {
     }
 }
 
-const fn shift_name(class: ResourceClass) -> &'static str {
-    match class {
-        ResourceClass::Sampler => "shift-sampler-binding",
-        ResourceClass::Texture => "shift-texture-binding",
-        ResourceClass::Image => "shift-image-binding",
-        ResourceClass::UniformBuffer => "shift-ubo-binding",
-        ResourceClass::StorageBuffer => "shift-ssbo-binding",
-        ResourceClass::CombinedSampler => "shift-combined-sampler-binding",
-        ResourceClass::AccelerationStructure => "shift-as-binding",
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOptions {
     pub name: String,
@@ -102,13 +89,6 @@ pub struct CompileOptions {
     pub entry_point: Option<String>,
     pub vulkan_version: (u8, u8),
     pub spirv_version: (u8, u8),
-    pub auto_map_bindings: bool,
-    pub auto_map_locations: bool,
-    pub binding_shifts: BindingShifts,
-    pub resource_set_binding: Vec<String>,
-    pub keep_uncalled: bool,
-    pub hlsl_offsets: bool,
-    pub export_functions: bool,
     pub suppress_warnings: bool,
     pub debug_info: DebugInfo,
     pub limits: ResourceLimits,
@@ -116,7 +96,6 @@ pub struct CompileOptions {
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
     pub enhanced_messages: bool,
-    pub auto_sampled_textures: bool,
 }
 
 impl CompileOptions {
@@ -139,13 +118,6 @@ impl CompileOptions {
             entry_point: None,
             vulkan_version: (1, 0),
             spirv_version: (1, 0),
-            auto_map_bindings: false,
-            auto_map_locations: false,
-            binding_shifts: BindingShifts::default(),
-            resource_set_binding: Vec::new(),
-            keep_uncalled: false,
-            hlsl_offsets: false,
-            export_functions: false,
             suppress_warnings: false,
             debug_info: DebugInfo::Names,
             limits: ResourceLimits::default(),
@@ -153,7 +125,6 @@ impl CompileOptions {
             nan_clamp: false,
             discard_is_terminate: false,
             enhanced_messages: false,
-            auto_sampled_textures: false,
         }
     }
 
@@ -185,51 +156,12 @@ impl CompileOptions {
         text
     }
 
-    pub fn resource_set(&self) -> Option<u32> {
-        match self.resource_set_binding.as_slice() {
-            [single] => Some(
-                single
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(0),
-            ),
-            _ => None,
-        }
-    }
-
     pub fn processes(&self) -> Vec<String> {
         let mut processes = Vec::new();
         if let Some(ref name) = self.entry_point {
             processes.push(format!("entry-point {name}"));
         }
         processes.extend(self.macros.iter().map(Macro::process));
-        for class in ResourceClass::ALL {
-            let index = class.index();
-            if let Some(&base) = self.binding_shifts.base.get(index)
-                && base != 0
-            {
-                processes.push(format!("{} {base}", shift_name(class)));
-            }
-            for (set, base) in self.binding_shifts.per_set.get(index).into_iter().flatten() {
-                if *base != 0 {
-                    processes.push(format!("{} {base} {set}", shift_name(class)));
-                }
-            }
-        }
-        if !self.resource_set_binding.is_empty() {
-            processes.push(format!(
-                "resource-set-binding {}",
-                self.resource_set_binding.join(" ")
-            ));
-        }
-        if self.auto_map_bindings {
-            processes.push(String::from("auto-map-bindings"));
-        }
-        if self.auto_map_locations {
-            processes.push(String::from("auto-map-locations"));
-        }
         if self.invert_y {
             processes.push(String::from("invert-y"));
         }
@@ -246,12 +178,6 @@ impl CompileOptions {
         if self.suppress_warnings {
             processes.push(String::from("suppress-warnings"));
         }
-        if self.keep_uncalled {
-            processes.push(String::from("keep-uncalled"));
-        }
-        if self.hlsl_offsets {
-            processes.push(String::from("hlsl-offsets"));
-        }
         if self.entry_point.is_none() {
             processes.push(String::from("entry-point main"));
         }
@@ -262,22 +188,14 @@ impl CompileOptions {
         glsl::Options {
             builtin_tables,
             library: self.stage.is_none(),
-            auto_map_bindings: self.auto_map_bindings,
-            auto_map_locations: self.auto_map_locations,
             preamble: Some(self.preamble()),
-            hlsl_offsets: self.hlsl_offsets,
             debug_info: self.debug_info.has_lines(),
             spirv_version: Some(self.spirv_version),
             source_name: Some(self.name.clone()),
-            keep_uncalled: self.keep_uncalled,
-            resource_set: self.resource_set(),
-            binding_shifts: self.binding_shifts.clone(),
-            export_functions: self.export_functions,
             limits: self.limits,
             invert_y: self.invert_y,
             nan_clamp: self.nan_clamp,
             discard_is_terminate: self.discard_is_terminate,
-            auto_sampled_textures: self.auto_sampled_textures,
             ..glsl::Options::from(self.stage.unwrap_or(ShaderStage::Compute))
         }
     }
@@ -285,13 +203,7 @@ impl CompileOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramOptions {
-    pub link: bool,
     pub generate_spirv: bool,
-    pub auto_map_bindings: bool,
-    pub auto_map_locations: bool,
-    pub binding_shifts: Vec<(ShaderStage, BindingShifts)>,
-    pub keep_uncalled: bool,
-    pub export_functions: bool,
     pub suppress_warnings: bool,
     pub debug_info: DebugInfo,
     pub spirv_version: (u8, u8),
@@ -306,13 +218,7 @@ pub struct ProgramOptions {
 impl Default for ProgramOptions {
     fn default() -> Self {
         Self {
-            link: true,
             generate_spirv: true,
-            auto_map_bindings: false,
-            auto_map_locations: false,
-            binding_shifts: Vec::new(),
-            keep_uncalled: false,
-            export_functions: false,
             suppress_warnings: false,
             debug_info: DebugInfo::Names,
             spirv_version: (1, 0),
@@ -330,22 +236,11 @@ impl ProgramOptions {
     pub const fn optimizer_context(&self) -> rglsl_opt::Context {
         rglsl_opt::Context {
             debug: self.debug_info.optimizer_level(),
-            export_functions: self.export_functions,
-            unlinked: !self.link,
         }
     }
 
     pub(crate) fn link_options(&self) -> crate::Options {
         crate::Options {
-            auto_map_locations: self.auto_map_locations,
-            auto_map_bindings: self.auto_map_bindings,
-            binding_shifts: self
-                .binding_shifts
-                .iter()
-                .filter(|(_, shifts)| !shifts.is_empty())
-                .cloned()
-                .collect(),
-            keep_uncalled: self.keep_uncalled,
             limits: self.limits,
             validate_io: self.validate_io,
         }
