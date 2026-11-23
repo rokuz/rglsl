@@ -43,17 +43,9 @@ struct List {
     result: Type,
     mismatch: bool,
     constant: bool,
-    values: Option<Vec<Value>>,
+    values: Option<Vec<ConstantValues>>,
     failed: bool,
     uses: u32,
-}
-
-fn append(collected: &mut Vec<Value>, values: ConstantValues) {
-    if collected.is_empty() {
-        *collected = values.into_vec();
-    } else {
-        collected.extend_from_slice(&values);
-    }
 }
 
 struct Placement {
@@ -2243,11 +2235,11 @@ impl Analyzer<'_> {
                 );
             }
         }
-        match (&mut list.values, operand.value, element.base_scalar()) {
-            (Some(collected), Some(value), Some(scalar)) => {
-                append(collected, value.convert(scalar).into_values());
+        let from = operand.ty.base_scalar();
+        match (&mut list.values, operand.value) {
+            (Some(parts), Some(value)) => {
+                parts.push(value.into_values_of(from, element.base_scalar()));
             }
-            (Some(collected), Some(value), None) => append(collected, value.into_values()),
             _ => list.values = None,
         }
     }
@@ -2284,7 +2276,7 @@ impl Analyzer<'_> {
         operand.specialization = constant && specialization;
         operand.value = values
             .filter(|_| constant && !specialization)
-            .map(Constant::new);
+            .map(|parts| Constant::new(ConstantValues::concat(parts)));
         operand
     }
 

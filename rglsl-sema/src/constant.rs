@@ -1,5 +1,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::fmt;
+use core::ops::{Deref, DerefMut};
 
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
 
@@ -195,7 +197,186 @@ impl Value {
     }
 }
 
-pub type ConstantValues = SmallVec<Value, 1>;
+#[derive(Default)]
+pub struct ConstantValues {
+    items: SmallVec<Value, 1>,
+    start: usize,
+}
+
+impl ConstantValues {
+    pub const fn new() -> Self {
+        Self {
+            items: SmallVec::new(),
+            start: 0,
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            items: SmallVec::with_capacity(capacity),
+            start: 0,
+        }
+    }
+
+    pub fn from_elem(value: Value, count: usize) -> Self {
+        Self {
+            items: SmallVec::from_elem(value, count),
+            start: 0,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[Value] {
+        self.items.get(self.start..).unwrap_or_default()
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [Value] {
+        self.items.get_mut(self.start..).unwrap_or_default()
+    }
+
+    pub fn push(&mut self, value: Value) {
+        self.items.push(value);
+    }
+
+    pub fn extend_from_slice(&mut self, values: &[Value]) {
+        self.items.extend_from_slice(values);
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.items.truncate(self.start.saturating_add(len));
+    }
+
+    pub fn prepend(&mut self, values: &[Value]) {
+        let count = values.len();
+        if count == 0 {
+            return;
+        }
+        if self.start < count {
+            let live = self.as_slice();
+            let gap = count.saturating_add(count.max(live.len()));
+            let mut items = SmallVec::with_capacity(gap.saturating_add(live.len()));
+            items.extend(core::iter::repeat_n(Value::Bool(false), gap));
+            items.extend_from_slice(live);
+            self.items = items;
+            self.start = gap;
+        }
+        let start = self.start - count;
+        if let Some(slots) = self.items.get_mut(start..self.start) {
+            slots.copy_from_slice(values);
+        }
+        self.start = start;
+    }
+
+    pub fn concat(parts: Vec<Self>) -> Self {
+        let largest = parts
+            .iter()
+            .enumerate()
+            .max_by_key(|&(index, part)| (part.len(), core::cmp::Reverse(index)))
+            .map(|(index, _)| index);
+        let Some(largest) = largest else {
+            return Self::new();
+        };
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        let mut base = Self::new();
+        for (index, part) in parts.into_iter().enumerate() {
+            match index.cmp(&largest) {
+                core::cmp::Ordering::Less => before.push(part),
+                core::cmp::Ordering::Equal => base = part,
+                core::cmp::Ordering::Greater => after.push(part),
+            }
+        }
+        for part in before.iter().rev() {
+            base.prepend(part);
+        }
+        for part in &after {
+            base.extend_from_slice(part);
+        }
+        base
+    }
+}
+
+impl Deref for ConstantValues {
+    type Target = [Value];
+
+    fn deref(&self) -> &[Value] {
+        self.as_slice()
+    }
+}
+
+impl DerefMut for ConstantValues {
+    fn deref_mut(&mut self) -> &mut [Value] {
+        self.as_mut_slice()
+    }
+}
+
+impl Clone for ConstantValues {
+    fn clone(&self) -> Self {
+        Self::from(self.as_slice())
+    }
+}
+
+impl PartialEq for ConstantValues {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl fmt::Debug for ConstantValues {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
+impl Extend<Value> for ConstantValues {
+    fn extend<I: IntoIterator<Item = Value>>(&mut self, values: I) {
+        self.items.extend(values);
+    }
+}
+
+impl FromIterator<Value> for ConstantValues {
+    fn from_iter<I: IntoIterator<Item = Value>>(values: I) -> Self {
+        Self {
+            items: values.into_iter().collect(),
+            start: 0,
+        }
+    }
+}
+
+impl From<Vec<Value>> for ConstantValues {
+    fn from(values: Vec<Value>) -> Self {
+        Self {
+            items: SmallVec::from(values),
+            start: 0,
+        }
+    }
+}
+
+impl From<&[Value]> for ConstantValues {
+    fn from(values: &[Value]) -> Self {
+        Self {
+            items: SmallVec::from(values),
+            start: 0,
+        }
+    }
+}
+
+impl<const N: usize> From<[Value; N]> for ConstantValues {
+    fn from(values: [Value; N]) -> Self {
+        Self {
+            items: SmallVec::from(values),
+            start: 0,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a ConstantValues {
+    type Item = &'a Value;
+    type IntoIter = core::slice::Iter<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Constant {
@@ -219,6 +400,17 @@ impl Constant {
 
     pub fn into_values(self) -> ConstantValues {
         Arc::try_unwrap(self.values).unwrap_or_else(|shared| shared.as_ref().clone())
+    }
+
+    pub fn into_values_of(self, from: Option<Scalar>, target: Option<Scalar>) -> ConstantValues {
+        match target {
+            Some(target) if from != Some(target) => self
+                .values
+                .iter()
+                .map(|value| value.convert(target))
+                .collect(),
+            _ => self.into_values(),
+        }
     }
 
     pub fn first(&self) -> Option<Value> {

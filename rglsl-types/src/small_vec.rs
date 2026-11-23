@@ -114,13 +114,6 @@ impl<T, const N: usize> SmallVec<T, N> {
     pub fn clear(&mut self) {
         self.truncate(0);
     }
-
-    pub fn into_vec(self) -> Vec<T> {
-        match self.storage {
-            Storage::Inline(inline) => inline.into_iter().collect(),
-            Storage::Heap(heap) => heap,
-        }
-    }
 }
 
 impl<T: Clone, const N: usize> SmallVec<T, N> {

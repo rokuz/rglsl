@@ -771,6 +771,41 @@ fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn trailing_chain(count: usize) -> String {
+    chain_of("struct R0 { int a; };\n", count, |level| {
+        format!("struct R{level} {{ int b; R{} a; }};\n", level - 1)
+    })
+}
+
+fn trailing_constructor(count: usize) -> String {
+    let mut constructor = String::new();
+    for level in (1..count).rev() {
+        constructor.push_str(&format!("R{level}(0, "));
+    }
+    constructor.push_str("R0(2)");
+    constructor.push_str(&")".repeat(count.saturating_sub(1)));
+    constructor
+}
+
+fn middle_array_chain(count: usize) -> String {
+    chain_of("struct A0 { int a; };\n", count, |level| {
+        format!(
+            "struct A{level} {{ int b; A{} a[1]; int c; }};\n",
+            level - 1
+        )
+    })
+}
+
+fn middle_array_constructor(count: usize) -> String {
+    let mut constructor = String::new();
+    for level in (1..count).rev() {
+        constructor.push_str(&format!("A{level}(0, A{}[1](", level - 1));
+    }
+    constructor.push_str("A0(2)");
+    constructor.push_str(&"), 0)".repeat(count.saturating_sub(1)));
+    constructor
+}
+
 fn deep_initializers_compile_on_a_small_stack(depth: usize) -> TestResult {
     compiles_at(depth, "struct initializer lists", |count| {
         let levels = count.saturating_sub(1);
@@ -795,6 +830,46 @@ fn deep_initializers_compile_on_a_small_stack(depth: usize) -> TestResult {
                 struct_constructor(count)
             ),
             "b = k.b;",
+        )
+    })?;
+    compiles_at(depth, "struct initializer lists nested last", |count| {
+        let levels = count.saturating_sub(1);
+        let initializer = format!("{}{{2}}{}", "{0, ".repeat(levels), "}".repeat(levels));
+        shader(
+            &trailing_chain(count),
+            &format!("R{} s = {initializer}; b = s.b;", count - 1),
+        )
+    })?;
+    compiles_at(depth, "struct constructors nested last", |count| {
+        shader(
+            &trailing_chain(count),
+            &format!(
+                "R{} s = {}; b = s.b;",
+                count - 1,
+                trailing_constructor(count)
+            ),
+        )
+    })?;
+    compiles_at(depth, "constant structs nested last", |count| {
+        shader(
+            &format!(
+                "{}const R{} k = {};",
+                trailing_chain(count),
+                count - 1,
+                trailing_constructor(count)
+            ),
+            "b = k.b;",
+        )
+    })?;
+    compiles_at(depth, "array constructors nested in the middle", |count| {
+        shader(
+            &format!(
+                "{}const A{} k = {};",
+                middle_array_chain(count),
+                count - 1,
+                middle_array_constructor(count)
+            ),
+            "b = k.b + k.c;",
         )
     })?;
     Ok(())

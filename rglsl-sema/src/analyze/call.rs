@@ -1537,7 +1537,7 @@ impl Analyzer<'_> {
                     && !ty.contains_reference(&self.types)
             })
             .unwrap_or_default();
-        let mut combined = ConstantValues::new();
+        let mut parts = Vec::with_capacity(operands.len());
         for (index, (operand, element)) in operands.iter_mut().zip(element_types).enumerate() {
             let value = match forgotten.get(index) {
                 Some(argument) => {
@@ -1548,15 +1548,9 @@ impl Analyzer<'_> {
                 }
                 None => operand.value.clone()?,
             };
-            match element.base_scalar() {
-                Some(scalar) => {
-                    combined.extend(value.values.iter().map(|item| item.convert(scalar)));
-                }
-                None if combined.is_empty() => combined = value.into_values(),
-                None => combined.extend_from_slice(&value.values),
-            }
+            parts.push(value.into_values_of(operand.ty.base_scalar(), element.base_scalar()));
         }
-        Some(Constant::new(combined))
+        Some(Constant::new(ConstantValues::concat(parts)))
     }
 
     pub(crate) fn constructor_with(
