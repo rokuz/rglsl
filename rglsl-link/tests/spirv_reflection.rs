@@ -101,7 +101,7 @@ fn without_ids(reflection: &Reflection) -> Reflection {
         variable.variable_id = 0;
     }
     for constant in &mut reflection.specialization_constants {
-        constant.constant_id = 0;
+        constant.result_id = 0;
     }
     reflection
 }
@@ -542,7 +542,7 @@ fn specialization_constants_and_local_size_id() -> TestResult {
         .iter()
         .map(|constant| {
             (
-                constant.id,
+                constant.spec_id,
                 constant.name.as_deref(),
                 constant.scalar,
                 constant.default,

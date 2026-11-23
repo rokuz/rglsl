@@ -214,9 +214,9 @@ impl ScalarKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpecializationConstant {
-    pub id: u32,
+    pub spec_id: u32,
     pub name: Option<String>,
-    pub constant_id: u32,
+    pub result_id: u32,
     pub scalar: ScalarType,
     pub default: ScalarValue,
 }

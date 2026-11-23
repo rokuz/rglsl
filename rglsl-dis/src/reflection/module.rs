@@ -604,7 +604,7 @@ impl Module {
     ) -> Result<Vec<SpecializationConstant>, ReflectError> {
         let mut constants = Vec::new();
         for (&constant_id, constant) in &self.constants {
-            let Some(id) = self.decorations(constant_id).spec_id else {
+            let Some(spec_id) = self.decorations(constant_id).spec_id else {
                 continue;
             };
             let (scalar, default) = match *constant {
@@ -627,14 +627,14 @@ impl Module {
                 _ => continue,
             };
             constants.push(SpecializationConstant {
-                id,
+                spec_id,
                 name: self.name(constant_id),
-                constant_id,
+                result_id: constant_id,
                 scalar,
                 default,
             });
         }
-        constants.sort_by_key(|constant| (constant.id, constant.constant_id));
+        constants.sort_by_key(|constant| (constant.spec_id, constant.result_id));
         Ok(constants)
     }
 }

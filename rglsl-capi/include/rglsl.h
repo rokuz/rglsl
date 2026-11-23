@@ -529,11 +529,11 @@ size_t rglsl_reflection_specialization_count(const rglsl_reflection *reflection)
 
 rglsl_result rglsl_reflection_specialization(const rglsl_reflection *reflection,
                                              size_t index,
-                                             uint32_t *id,
+                                             uint32_t *spec_id,
                                              rglsl_scalar_kind *kind,
                                              uint32_t *width,
                                              uint64_t *default_bits,
-                                             uint32_t *constant_id);
+                                             uint32_t *result_id);
 
 const char *rglsl_reflection_specialization_name(const rglsl_reflection *reflection, size_t index);
 

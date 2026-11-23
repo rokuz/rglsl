@@ -1103,21 +1103,21 @@ pub unsafe extern "C" fn rglsl_reflection_specialization_count(
 pub unsafe extern "C" fn rglsl_reflection_specialization(
     reflection: *const Reflection,
     index: usize,
-    id: *mut u32,
+    spec_id: *mut u32,
     kind: *mut ScalarKind,
     width: *mut u32,
     default_bits: *mut u64,
-    constant_id: *mut u32,
+    result_id: *mut u32,
 ) -> ResultCode {
     let reflection_ref = unsafe { reflection.as_ref() };
     let output = Specialization {
-        id: unsafe { id.as_mut() },
+        spec_id: unsafe { spec_id.as_mut() },
         scalar: Scalar {
             kind: unsafe { kind.as_mut() },
             width: unsafe { width.as_mut() },
         },
         default_bits: unsafe { default_bits.as_mut() },
-        constant_id: unsafe { constant_id.as_mut() },
+        result_id: unsafe { result_id.as_mut() },
     };
     reflection::reflection_specialization(reflection_ref, index, output)
 }

@@ -232,9 +232,9 @@ impl Writer {
 
     fn specialization(&mut self, constant: &SpecializationConstant) {
         self.object(None);
-        self.number(Some("id"), constant.id);
+        self.number(Some("spec_id"), constant.spec_id);
         self.optional_string("name", constant.name.as_deref());
-        self.number(Some("constant_id"), constant.constant_id);
+        self.number(Some("result_id"), constant.result_id);
         self.object(Some("type"));
         self.scalar(constant.scalar);
         self.end_object();

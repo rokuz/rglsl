@@ -458,10 +458,10 @@ pub(crate) fn reflection_specialization_count(reflection: Option<&Reflection>) -
 }
 
 pub(crate) struct Specialization<'a> {
-    pub(crate) id: Option<&'a mut u32>,
+    pub(crate) spec_id: Option<&'a mut u32>,
     pub(crate) scalar: Scalar<'a>,
     pub(crate) default_bits: Option<&'a mut u64>,
-    pub(crate) constant_id: Option<&'a mut u32>,
+    pub(crate) result_id: Option<&'a mut u32>,
 }
 
 pub(crate) fn reflection_specialization(
@@ -471,13 +471,13 @@ pub(crate) fn reflection_specialization(
 ) -> ResultCode {
     query(reflection, RGLSL_RESULT_INVALID_ARGUMENT, |reflection| {
         let constant = reflection.source.specialization_constants.get(index)?;
-        put(output.id, constant.id);
+        put(output.spec_id, constant.spec_id);
         output.scalar.write(constant.scalar);
         put(
             output.default_bits,
             constant.default.bits(constant.scalar.width),
         );
-        put(output.constant_id, constant.constant_id);
+        put(output.result_id, constant.result_id);
         Some(RGLSL_RESULT_OK)
     })
 }
