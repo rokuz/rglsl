@@ -27,6 +27,10 @@
 
 #define RGLSL_ABI_VERSION 3
 
+#define RGLSL_DESCRIPTOR_HEAP_RESOURCE 1
+
+#define RGLSL_DESCRIPTOR_HEAP_SAMPLER (1 << 1)
+
 typedef struct rglsl_blob rglsl_blob;
 
 typedef struct rglsl_compile_options rglsl_compile_options;
@@ -41,9 +45,13 @@ typedef struct rglsl_limits rglsl_limits;
 
 typedef struct rglsl_object rglsl_object;
 
+typedef struct rglsl_pipeline_layout rglsl_pipeline_layout;
+
 typedef struct rglsl_program rglsl_program;
 
 typedef struct rglsl_program_options rglsl_program_options;
+
+typedef struct rglsl_reflection rglsl_reflection;
 
 typedef uint32_t rglsl_result;
 
@@ -64,6 +72,12 @@ typedef uint32_t rglsl_opt_level;
 typedef uint32_t rglsl_target_gpu;
 
 typedef uint32_t rglsl_disassembly;
+
+typedef uint32_t rglsl_descriptor_type;
+
+typedef uint32_t rglsl_interface;
+
+typedef uint32_t rglsl_scalar_kind;
 
 #define RGLSL_RESULT_OK 0
 
@@ -140,6 +154,42 @@ typedef uint32_t rglsl_disassembly;
 #define RGLSL_DISASSEMBLY_GLSLANG 0
 
 #define RGLSL_DISASSEMBLY_STANDARD 1
+
+#define RGLSL_DESCRIPTOR_TYPE_SAMPLER 0
+
+#define RGLSL_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1
+
+#define RGLSL_DESCRIPTOR_TYPE_SAMPLED_IMAGE 2
+
+#define RGLSL_DESCRIPTOR_TYPE_STORAGE_IMAGE 3
+
+#define RGLSL_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER 4
+
+#define RGLSL_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER 5
+
+#define RGLSL_DESCRIPTOR_TYPE_UNIFORM_BUFFER 6
+
+#define RGLSL_DESCRIPTOR_TYPE_STORAGE_BUFFER 7
+
+#define RGLSL_DESCRIPTOR_TYPE_INPUT_ATTACHMENT 10
+
+#define RGLSL_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE 1000150000
+
+#define RGLSL_DESCRIPTOR_TYPE_TENSOR 1000460000
+
+#define RGLSL_SCALAR_KIND_BOOL 0
+
+#define RGLSL_SCALAR_KIND_INT 1
+
+#define RGLSL_SCALAR_KIND_UINT 2
+
+#define RGLSL_SCALAR_KIND_FLOAT 3
+
+#define RGLSL_SCALAR_KIND_ENCODED_FLOAT 4
+
+#define RGLSL_INTERFACE_INPUT 0
+
+#define RGLSL_INTERFACE_OUTPUT 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -397,6 +447,136 @@ rglsl_result rglsl_diagnostics_format(const rglsl_diagnostics *diagnostics,
 rglsl_result rglsl_diagnostics_info_log(const rglsl_diagnostics *diagnostics,
                                         uint32_t flags,
                                         rglsl_blob **text);
+
+rglsl_result rglsl_reflect(const uint32_t *words,
+                           size_t word_count,
+                           rglsl_reflection **reflection,
+                           rglsl_diagnostics **diagnostics);
+
+void rglsl_reflection_destroy(rglsl_reflection *reflection);
+
+const rglsl_reflection *rglsl_program_stage_reflection(const rglsl_program *program, size_t index);
+
+rglsl_result rglsl_reflection_stage(const rglsl_reflection *reflection, rglsl_stage *stage);
+
+const char *rglsl_reflection_entry_point(const rglsl_reflection *reflection);
+
+rglsl_result rglsl_reflection_local_size(const rglsl_reflection *reflection,
+                                         uint32_t dimension,
+                                         uint32_t *size,
+                                         bool *specialized,
+                                         uint32_t *spec_id);
+
+size_t rglsl_reflection_binding_count(const rglsl_reflection *reflection);
+
+rglsl_result rglsl_reflection_binding(const rglsl_reflection *reflection,
+                                      size_t index,
+                                      uint32_t *set,
+                                      uint32_t *binding,
+                                      rglsl_descriptor_type *descriptor_type,
+                                      uint32_t *count,
+                                      uint32_t *variable_id);
+
+const char *rglsl_reflection_binding_name(const rglsl_reflection *reflection, size_t index);
+
+rglsl_result rglsl_reflection_binding_block(const rglsl_reflection *reflection,
+                                            size_t index,
+                                            uint32_t *size,
+                                            uint32_t *runtime_array_stride);
+
+uint32_t rglsl_reflection_descriptor_heaps(const rglsl_reflection *reflection);
+
+size_t rglsl_reflection_push_constant_count(const rglsl_reflection *reflection);
+
+rglsl_result rglsl_reflection_push_constant(const rglsl_reflection *reflection,
+                                            size_t index,
+                                            uint32_t *offset,
+                                            uint32_t *size,
+                                            uint32_t *variable_id);
+
+const char *rglsl_reflection_push_constant_name(const rglsl_reflection *reflection, size_t index);
+
+rglsl_result rglsl_reflection_push_constant_bank(const rglsl_reflection *reflection,
+                                                 size_t index,
+                                                 uint32_t *bank,
+                                                 uint32_t *bank_offset);
+
+size_t rglsl_reflection_interface_count(const rglsl_reflection *reflection,
+                                        rglsl_interface direction);
+
+rglsl_result rglsl_reflection_interface(const rglsl_reflection *reflection,
+                                        rglsl_interface direction,
+                                        size_t index,
+                                        uint32_t *location,
+                                        uint32_t *component,
+                                        uint32_t *variable_id);
+
+const char *rglsl_reflection_interface_name(const rglsl_reflection *reflection,
+                                            rglsl_interface direction,
+                                            size_t index);
+
+rglsl_result rglsl_reflection_interface_type(const rglsl_reflection *reflection,
+                                             rglsl_interface direction,
+                                             size_t index,
+                                             rglsl_scalar_kind *kind,
+                                             uint32_t *width,
+                                             uint32_t *vector_size,
+                                             uint32_t *columns,
+                                             const uint32_t **array,
+                                             size_t *array_rank);
+
+size_t rglsl_reflection_specialization_count(const rglsl_reflection *reflection);
+
+rglsl_result rglsl_reflection_specialization(const rglsl_reflection *reflection,
+                                             size_t index,
+                                             uint32_t *id,
+                                             rglsl_scalar_kind *kind,
+                                             uint32_t *width,
+                                             uint64_t *default_bits,
+                                             uint32_t *constant_id);
+
+const char *rglsl_reflection_specialization_name(const rglsl_reflection *reflection, size_t index);
+
+rglsl_result rglsl_reflection_json(const rglsl_reflection *reflection, rglsl_blob **json);
+
+rglsl_result rglsl_pipeline_layout_create(const rglsl_reflection *const *reflections,
+                                          size_t count,
+                                          rglsl_pipeline_layout **layout,
+                                          rglsl_diagnostics **diagnostics);
+
+rglsl_result rglsl_program_pipeline_layout(const rglsl_program *program,
+                                           rglsl_pipeline_layout **layout,
+                                           rglsl_diagnostics **diagnostics);
+
+rglsl_result rglsl_program_reflection_json(const rglsl_program *program,
+                                           rglsl_blob **json,
+                                           rglsl_diagnostics **diagnostics);
+
+void rglsl_pipeline_layout_destroy(rglsl_pipeline_layout *layout);
+
+size_t rglsl_pipeline_layout_binding_count(const rglsl_pipeline_layout *layout);
+
+rglsl_result rglsl_pipeline_layout_binding(const rglsl_pipeline_layout *layout,
+                                           size_t index,
+                                           uint32_t *set,
+                                           uint32_t *binding,
+                                           rglsl_descriptor_type *descriptor_type,
+                                           uint32_t *count,
+                                           uint32_t *stage_flags);
+
+const char *rglsl_pipeline_layout_binding_name(const rglsl_pipeline_layout *layout, size_t index);
+
+size_t rglsl_pipeline_layout_push_constant_range_count(const rglsl_pipeline_layout *layout);
+
+rglsl_result rglsl_pipeline_layout_push_constant_range(const rglsl_pipeline_layout *layout,
+                                                       size_t index,
+                                                       uint32_t *stage_flags,
+                                                       uint32_t *offset,
+                                                       uint32_t *size);
+
+rglsl_result rglsl_pipeline_layout_push_constant_range_bank(const rglsl_pipeline_layout *layout,
+                                                            size_t index,
+                                                            uint32_t *bank);
 
 #ifdef __cplusplus
 }  // extern "C"

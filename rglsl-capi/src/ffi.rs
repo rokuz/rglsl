@@ -7,6 +7,10 @@ use crate::api::{
     Limits, Location, Object, OptLevel, Program, ProgramOptions, ResultCode, Severity, Stage,
     TargetGpu,
 };
+use crate::reflection::{
+    self, Binding, DescriptorType, Interface, InterfaceFormat, InterfaceSlot, LocalSize,
+    PipelineLayout, Reflection, Scalar, ScalarKind, Specialization,
+};
 
 pub type IncludeCallback = Option<
     unsafe extern "C" fn(
@@ -870,4 +874,379 @@ pub unsafe extern "C" fn rglsl_diagnostics_info_log(
     let diagnostics = unsafe { diagnostics.as_ref() };
     let text = unsafe { text.as_mut() };
     api::diagnostics_format(diagnostics, flags, true, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflect(
+    words: *const u32,
+    word_count: usize,
+    reflection: *mut *mut Reflection,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let words = unsafe { word_slice(words, word_count) };
+    let reflection = unsafe { reflection.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    reflection::reflect(words, reflection, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_destroy(reflection: *mut Reflection) {
+    api::destroy(unsafe { take(reflection) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_stage_reflection(
+    program: *const Program,
+    index: usize,
+) -> *const Reflection {
+    reflection::program_stage_reflection(unsafe { program.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_stage(
+    reflection: *const Reflection,
+    stage: *mut Stage,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let stage = unsafe { stage.as_mut() };
+    reflection::reflection_stage(reflection_ref, stage)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_entry_point(
+    reflection: *const Reflection,
+) -> *const c_char {
+    reflection::reflection_entry_point(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_local_size(
+    reflection: *const Reflection,
+    dimension: u32,
+    size: *mut u32,
+    specialized: *mut bool,
+    spec_id: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let output = LocalSize {
+        size: unsafe { size.as_mut() },
+        specialized: unsafe { specialized.as_mut() },
+        id: unsafe { spec_id.as_mut() },
+    };
+    reflection::reflection_local_size(reflection_ref, dimension, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_binding_count(reflection: *const Reflection) -> usize {
+    reflection::reflection_binding_count(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_binding(
+    reflection: *const Reflection,
+    index: usize,
+    set: *mut u32,
+    binding: *mut u32,
+    descriptor_type: *mut DescriptorType,
+    count: *mut u32,
+    variable_id: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let output = Binding {
+        set: unsafe { set.as_mut() },
+        binding: unsafe { binding.as_mut() },
+        descriptor_type: unsafe { descriptor_type.as_mut() },
+        count: unsafe { count.as_mut() },
+        extra: unsafe { variable_id.as_mut() },
+    };
+    reflection::reflection_binding(reflection_ref, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_binding_name(
+    reflection: *const Reflection,
+    index: usize,
+) -> *const c_char {
+    reflection::reflection_binding_name(unsafe { reflection.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_binding_block(
+    reflection: *const Reflection,
+    index: usize,
+    size: *mut u32,
+    runtime_array_stride: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let size = unsafe { size.as_mut() };
+    let runtime_array_stride = unsafe { runtime_array_stride.as_mut() };
+    reflection::reflection_binding_block(reflection_ref, index, size, runtime_array_stride)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_descriptor_heaps(reflection: *const Reflection) -> u32 {
+    reflection::reflection_descriptor_heaps(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_push_constant_count(
+    reflection: *const Reflection,
+) -> usize {
+    reflection::reflection_push_constant_count(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_push_constant(
+    reflection: *const Reflection,
+    index: usize,
+    offset: *mut u32,
+    size: *mut u32,
+    variable_id: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let offset = unsafe { offset.as_mut() };
+    let size = unsafe { size.as_mut() };
+    let variable_id = unsafe { variable_id.as_mut() };
+    reflection::reflection_push_constant(reflection_ref, index, offset, size, variable_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_push_constant_name(
+    reflection: *const Reflection,
+    index: usize,
+) -> *const c_char {
+    reflection::reflection_push_constant_name(unsafe { reflection.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_push_constant_bank(
+    reflection: *const Reflection,
+    index: usize,
+    bank: *mut u32,
+    bank_offset: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let bank = unsafe { bank.as_mut() };
+    let bank_offset = unsafe { bank_offset.as_mut() };
+    reflection::reflection_push_constant_bank(reflection_ref, index, bank, bank_offset)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_interface_count(
+    reflection: *const Reflection,
+    direction: Interface,
+) -> usize {
+    reflection::reflection_interface_count(unsafe { reflection.as_ref() }, direction)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_interface(
+    reflection: *const Reflection,
+    direction: Interface,
+    index: usize,
+    location: *mut u32,
+    component: *mut u32,
+    variable_id: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let output = InterfaceSlot {
+        location: unsafe { location.as_mut() },
+        component: unsafe { component.as_mut() },
+        variable_id: unsafe { variable_id.as_mut() },
+    };
+    reflection::reflection_interface(reflection_ref, direction, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_interface_name(
+    reflection: *const Reflection,
+    direction: Interface,
+    index: usize,
+) -> *const c_char {
+    reflection::reflection_interface_name(unsafe { reflection.as_ref() }, direction, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_interface_type(
+    reflection: *const Reflection,
+    direction: Interface,
+    index: usize,
+    kind: *mut ScalarKind,
+    width: *mut u32,
+    vector_size: *mut u32,
+    columns: *mut u32,
+    array: *mut *const u32,
+    array_rank: *mut usize,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let output = InterfaceFormat {
+        scalar: Scalar {
+            kind: unsafe { kind.as_mut() },
+            width: unsafe { width.as_mut() },
+        },
+        vector_size: unsafe { vector_size.as_mut() },
+        columns: unsafe { columns.as_mut() },
+        array: unsafe { array.as_mut() },
+        array_rank: unsafe { array_rank.as_mut() },
+    };
+    reflection::reflection_interface_type(reflection_ref, direction, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_specialization_count(
+    reflection: *const Reflection,
+) -> usize {
+    reflection::reflection_specialization_count(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_specialization(
+    reflection: *const Reflection,
+    index: usize,
+    id: *mut u32,
+    kind: *mut ScalarKind,
+    width: *mut u32,
+    default_bits: *mut u64,
+    constant_id: *mut u32,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let output = Specialization {
+        id: unsafe { id.as_mut() },
+        scalar: Scalar {
+            kind: unsafe { kind.as_mut() },
+            width: unsafe { width.as_mut() },
+        },
+        default_bits: unsafe { default_bits.as_mut() },
+        constant_id: unsafe { constant_id.as_mut() },
+    };
+    reflection::reflection_specialization(reflection_ref, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_specialization_name(
+    reflection: *const Reflection,
+    index: usize,
+) -> *const c_char {
+    reflection::reflection_specialization_name(unsafe { reflection.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_reflection_json(
+    reflection: *const Reflection,
+    json: *mut *mut Blob,
+) -> ResultCode {
+    let reflection_ref = unsafe { reflection.as_ref() };
+    let json = unsafe { json.as_mut() };
+    reflection::reflection_json(reflection_ref, json)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_create(
+    reflections: *const *const Reflection,
+    count: usize,
+    layout: *mut *mut PipelineLayout,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let reflections = unsafe { handles(reflections, count) };
+    let layout = unsafe { layout.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    reflection::pipeline_layout_create(reflections, layout, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_pipeline_layout(
+    program: *const Program,
+    layout: *mut *mut PipelineLayout,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let program = unsafe { program.as_ref() };
+    let layout = unsafe { layout.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    reflection::program_pipeline_layout(program, layout, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_reflection_json(
+    program: *const Program,
+    json: *mut *mut Blob,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let program = unsafe { program.as_ref() };
+    let json = unsafe { json.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    reflection::program_reflection_json(program, json, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_destroy(layout: *mut PipelineLayout) {
+    api::destroy(unsafe { take(layout) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_binding_count(
+    layout: *const PipelineLayout,
+) -> usize {
+    reflection::pipeline_layout_binding_count(unsafe { layout.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_binding(
+    layout: *const PipelineLayout,
+    index: usize,
+    set: *mut u32,
+    binding: *mut u32,
+    descriptor_type: *mut DescriptorType,
+    count: *mut u32,
+    stage_flags: *mut u32,
+) -> ResultCode {
+    let layout = unsafe { layout.as_ref() };
+    let output = Binding {
+        set: unsafe { set.as_mut() },
+        binding: unsafe { binding.as_mut() },
+        descriptor_type: unsafe { descriptor_type.as_mut() },
+        count: unsafe { count.as_mut() },
+        extra: unsafe { stage_flags.as_mut() },
+    };
+    reflection::pipeline_layout_binding(layout, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_binding_name(
+    layout: *const PipelineLayout,
+    index: usize,
+) -> *const c_char {
+    reflection::pipeline_layout_binding_name(unsafe { layout.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range_count(
+    layout: *const PipelineLayout,
+) -> usize {
+    reflection::pipeline_layout_push_constant_range_count(unsafe { layout.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range(
+    layout: *const PipelineLayout,
+    index: usize,
+    stage_flags: *mut u32,
+    offset: *mut u32,
+    size: *mut u32,
+) -> ResultCode {
+    let layout = unsafe { layout.as_ref() };
+    let stage_flags = unsafe { stage_flags.as_mut() };
+    let offset = unsafe { offset.as_mut() };
+    let size = unsafe { size.as_mut() };
+    reflection::pipeline_layout_push_constant_range(layout, index, stage_flags, offset, size)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range_bank(
+    layout: *const PipelineLayout,
+    index: usize,
+    bank: *mut u32,
+) -> ResultCode {
+    let layout = unsafe { layout.as_ref() };
+    let bank = unsafe { bank.as_mut() };
+    reflection::pipeline_layout_push_constant_range_bank(layout, index, bank)
 }

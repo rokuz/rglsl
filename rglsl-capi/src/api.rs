@@ -8,6 +8,7 @@ use rglsl_link::{
 };
 
 use crate::ffi::Includer;
+use crate::reflection::Reflection;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +50,7 @@ impl Stage {
         self.0
     }
 
-    const fn of(stage: ShaderStage) -> Self {
+    pub(crate) const fn of(stage: ShaderStage) -> Self {
         match stage {
             ShaderStage::Vertex => RGLSL_STAGE_VERTEX,
             ShaderStage::TessControl => RGLSL_STAGE_TESS_CONTROL,
@@ -272,6 +273,31 @@ struct StageBinary {
     stage: Stage,
     entry_point: CString,
     words: Vec<u32>,
+    reflection: Reflection,
+}
+
+impl StageBinary {
+    fn new(binary: rglsl_link::StageBinary) -> Self {
+        Self {
+            stage: Stage::of(binary.stage),
+            entry_point: c_string(&binary.entry_point),
+            words: binary.words,
+            reflection: Reflection::new(binary.reflection),
+        }
+    }
+}
+
+impl Program {
+    pub(crate) fn stage_reflection(&self, index: usize) -> Option<&Reflection> {
+        self.stages.get(index).map(|binary| &binary.reflection)
+    }
+
+    pub(crate) fn reflections(&self) -> Vec<&rglsl_link::Reflection> {
+        self.stages
+            .iter()
+            .map(|binary| binary.reflection.source())
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -295,7 +321,7 @@ pub struct IncludeResult {
     resolved: Option<(Option<String>, String)>,
 }
 
-fn c_string(text: &str) -> CString {
+pub(crate) fn c_string(text: &str) -> CString {
     CString::from(text.bytes().filter_map(NonZeroU8::new).collect::<Vec<_>>())
 }
 
@@ -311,7 +337,7 @@ impl Blob {
         Self { bytes, size }
     }
 
-    fn text(text: String) -> Self {
+    pub(crate) fn text(text: String) -> Self {
         Self::bytes(text.into_bytes())
     }
 }
@@ -363,6 +389,13 @@ impl Failure {
         }
     }
 
+    pub(crate) fn from_message(code: ResultCode, message: String) -> Self {
+        Self {
+            code,
+            diagnostics: Diagnostics::error(message),
+        }
+    }
+
     fn argument(message: String) -> Self {
         Self {
             code: RGLSL_RESULT_INVALID_ARGUMENT,
@@ -370,7 +403,7 @@ impl Failure {
         }
     }
 
-    fn null(what: &str) -> Self {
+    pub(crate) fn null(what: &str) -> Self {
         Self::argument(format!("{what} is NULL"))
     }
 
@@ -384,7 +417,7 @@ impl Failure {
 
 pub(crate) type Slot<'a, T> = Option<&'a mut *mut T>;
 
-fn required<'a, T: ?Sized>(value: Option<&'a T>, what: &str) -> Result<&'a T, Failure> {
+pub(crate) fn required<'a, T: ?Sized>(value: Option<&'a T>, what: &str) -> Result<&'a T, Failure> {
     value.ok_or_else(|| Failure::null(what))
 }
 
@@ -845,11 +878,7 @@ fn built(build: rglsl_link::Build) -> Result<Program, Failure> {
     let mut errors = Vec::new();
     for output in build.stages {
         match output.result {
-            Ok(binary) => stages.push(StageBinary {
-                stage: Stage::of(binary.stage),
-                entry_point: c_string(&binary.entry_point),
-                words: binary.words,
-            }),
+            Ok(binary) => stages.push(StageBinary::new(binary)),
             Err(diagnostic) => errors.push(diagnostic),
         }
     }
@@ -1157,15 +1186,7 @@ pub(crate) fn link(
         let linked = rglsl_link::link_spirv(&modules, options)
             .map_err(|errors| Failure::new(RGLSL_RESULT_LINK_FAILED, &errors))?;
         Ok(Program {
-            stages: linked
-                .stages
-                .into_iter()
-                .map(|binary| StageBinary {
-                    stage: Stage::of(binary.stage),
-                    entry_point: c_string(&binary.entry_point),
-                    words: binary.words,
-                })
-                .collect(),
+            stages: linked.stages.into_iter().map(StageBinary::new).collect(),
             warnings: Diagnostics::new(&linked.warnings),
             reflection: None,
             files_read: Vec::new(),

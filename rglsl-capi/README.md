@@ -4,7 +4,8 @@ The C API of rglsl: a shared library (`librglsl_c.so`, `librglsl_c.dylib`, `rgls
 static library (`librglsl_c.a`, `rglsl_c.lib`) and the header `include/rglsl.h`. It wraps the
 compiler API of `rglsl-link` (`Compiler::compile_unit`, `preprocess`, `build`, `link_spirv`,
 `write_object`, `read_object`, diagnostics formatting, resource limits, depfiles) and the text
-forms of `rglsl-dis` (disassembly, hexadecimal text): everything the `rglsl` command line does.
+forms and reflection of `rglsl-dis` (disassembly, hexadecimal text, SPIR-V reflection): everything
+the `rglsl` command line does.
 
 ## CMake
 
@@ -112,6 +113,17 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_diagnostics_format(diagnostics, flags, &text)`, `rglsl_diagnostics_info_log` | glslang's message lines, with `RGLSL_FORMAT_ERROR_COLUMN`, `_ABSOLUTE_PATH`, `_UNNAMED_SOURCE`; the info log adds glslang's summary line |
 | `rglsl_link(objects, count, options, &program, &diagnostics)` | objects to a program; `options` may be `NULL` |
 | `rglsl_program_stage_count`, `_stage`, `_entry_point`, `_spirv`, `_warnings` | the SPIR-V binary and entry point of every stage, link warnings |
+| `rglsl_program_stage_reflection(program, index)` | the reflection of a stage's SPIR-V, owned by the program |
+| `rglsl_reflect(words, count, &reflection, &diagnostics)` | the reflection of any SPIR-V module with one entry point; `RGLSL_RESULT_INVALID_SPIRV` with a diagnostic for malformed words |
+| `rglsl_reflection_stage`, `_entry_point`, `_local_size(reflection, dimension, &size, &specialized, &spec_id)` | stage, entry point, local size (`RGLSL_RESULT_INVALID_ARGUMENT` without one) |
+| `rglsl_reflection_binding_count`, `_binding(reflection, index, &set, &binding, &type, &count, &variable_id)`, `_binding_name`, `_binding_block(reflection, index, &size, &runtime_array_stride)` | descriptor bindings sorted by set and binding: `rglsl_descriptor_type` (`RGLSL_DESCRIPTOR_TYPE_*`, the values of `VkDescriptorType`), count (0 for a runtime array), name (`NULL` without debug names), the fixed size of a buffer block and the stride of its trailing runtime array (0 without one) |
+| `rglsl_reflection_descriptor_heaps` | `RGLSL_DESCRIPTOR_HEAP_RESOURCE`, `_SAMPLER`: the descriptor heaps the stage uses |
+| `rglsl_reflection_push_constant_count`, `_push_constant(reflection, index, &offset, &size, &variable_id)`, `_push_constant_name`, `_push_constant_bank` | push constant blocks: lowest member offset and size; the `GL_NV_push_constant_bank` bank and member offset |
+| `rglsl_reflection_interface_count(reflection, direction)`, `_interface`, `_interface_name`, `_interface_type` | stage inputs (`RGLSL_INTERFACE_INPUT`) and outputs (`RGLSL_INTERFACE_OUTPUT`) without built-ins, members of blocks one by one: location, component, `rglsl_scalar_kind` (`RGLSL_SCALAR_KIND_*`), bit width, vector size, columns, array dimensions |
+| `rglsl_reflection_specialization_count`, `_specialization(reflection, index, &id, &kind, &width, &default_bits, &constant_id)`, `_specialization_name` | specialization constants: `SpecId`, type, the bits of the default value |
+| `rglsl_reflection_json(reflection, &text)`, `rglsl_program_reflection_json(program, &text, &diagnostics)` | the reflection as JSON; of a program with the merged pipeline layout (`--reflection-json`) |
+| `rglsl_program_pipeline_layout(program, &layout, &diagnostics)`, `rglsl_pipeline_layout_create(reflections, count, &layout, &diagnostics)` | the stages merged into a pipeline layout; a binding whose type or count differs between stages is `RGLSL_RESULT_LINK_FAILED` |
+| `rglsl_pipeline_layout_binding_count`, `_binding(layout, index, &set, &binding, &type, &count, &stage_flags)`, `_binding_name`, `_push_constant_range_count`, `_push_constant_range(layout, index, &stage_flags, &offset, &size)`, `_push_constant_range_bank` | bindings sorted by set and binding with the stages that use them (`VkShaderStageFlags` bits), push constant ranges per stage |
 | `rglsl_diagnostics_count`, `_text`, `_message`, `_location` | every diagnostic as a glslang-style line, all of them as one text, severity, file, line and column |
 | `rglsl_*_destroy` | frees a handle; `NULL` is ignored |
 
@@ -121,11 +133,13 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
   `_INVALID_ARGUMENT` (a `NULL` pointer, a string that is not UTF-8, an unknown stage, an
   unsupported SPIR-V version, an index out of range), `_COMPILE_FAILED`, `_LINK_FAILED`,
   `_INVALID_OBJECT` (bytes that are not an object file of this version), `_INVALID_SPIRV`
-  (words that do not disassemble) and `_INTERNAL_ERROR`
+  (words that do not disassemble or reflect) and `_INTERNAL_ERROR`
   (a panic inside rglsl, caught at the boundary; it is a bug). Getters return `NULL` or `0` for
-  a `NULL` handle or an index out of range.
+  a `NULL` handle or an index out of range. The output pointers of the reflection and pipeline
+  layout getters may be `NULL` for values the caller does not need.
 - **Enumerations** (`rglsl_result`, `rglsl_stage`, `rglsl_severity`, `rglsl_debug_info`,
-  `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`) are `uint32_t` with
+  `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`, `rglsl_descriptor_type`,
+  `rglsl_scalar_kind`, `rglsl_interface`) are `uint32_t` with
   `#define`d values, so any value a caller passes is defined behavior and an unknown one is
   rejected with `RGLSL_RESULT_INVALID_ARGUMENT`. Stages are numbered like glslang's
   `EShLanguage`.
