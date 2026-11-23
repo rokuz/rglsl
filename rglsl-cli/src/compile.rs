@@ -138,7 +138,6 @@ impl<'a> Session<'a> {
             return Err(Exit::Usage);
         };
         match extension {
-            "hlsl" => Err(Exit::out_of_scope(name)),
             "glsl" => match stem.rsplit_once('.') {
                 Some((_, inner)) => ShaderStage::from_extension(inner)
                     .map(Class::Stage)

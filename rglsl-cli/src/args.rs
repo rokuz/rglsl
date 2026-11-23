@@ -127,17 +127,6 @@ impl Exit {
             message: message.into(),
         }
     }
-
-    fn unsupported(option: &str, what: &str) -> Self {
-        Self::detailed(format!("{what} is not supported by rglsl"), option)
-    }
-
-    pub fn out_of_scope(option: &str) -> Self {
-        Self::detailed(
-            "rglsl compiles Vulkan GLSL 450 and 460 to SPIR-V only; OpenGL, HLSL and other GLSL versions are not supported",
-            option,
-        )
-    }
 }
 
 struct Cursor {
@@ -171,7 +160,7 @@ fn attached_number(text: &str) -> i64 {
     digits.parse().unwrap_or(0)
 }
 
-const TARGET_ENV_EXPECTED: &str = "--target-env expected one of: vulkan1.0, vulkan1.1, vulkan1.2,\nvulkan1.3, vulkan1.4, opengl, spirv1.0, spirv1.1, spirv1.2, spirv1.3,\nspirv1.4, spirv1.5 or spirv1.6";
+const TARGET_ENV_EXPECTED: &str = "--target-env expected one of: vulkan1.0, vulkan1.1, vulkan1.2,\nvulkan1.3, vulkan1.4, spirv1.0, spirv1.1, spirv1.2, spirv1.3,\nspirv1.4, spirv1.5 or spirv1.6";
 
 fn set_vulkan(options: &mut Options) {
     options.spirv = true;
@@ -184,8 +173,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
     match word.as_str() {
         "client" => match cursor.take_next().as_deref() {
             Some("vulkan100") => set_vulkan(options),
-            Some("opengl100") => return Err(Exit::out_of_scope(&word)),
-            _ => return Err(Exit::detailed("expects vulkan100 or opengl100", word)),
+            _ => return Err(Exit::detailed("expects vulkan100", word)),
         },
         "define-macro" | "d" => match cursor.take_next() {
             Some(definition) => options.macros.push(Macro::Define(first_line(&definition))),
@@ -217,7 +205,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
                     "spirv1.4" => options.spirv_version = Some((1, 4)),
                     "spirv1.5" => options.spirv_version = Some((1, 5)),
                     "spirv1.6" => options.spirv_version = Some((1, 6)),
-                    "opengl" => return Err(Exit::out_of_scope("--target-env opengl")),
                     _ => return Err(Exit::error(TARGET_ENV_EXPECTED)),
                 }
                 if target.starts_with("vulkan") {
@@ -242,33 +229,10 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         "absolute-path" => options.absolute_path = true,
         "help" => return Err(Exit::Usage),
         "object" => options.object = true,
-        "glsl-version"
-        | "hlsl-iomap"
-        | "hlsl-iomapper"
-        | "hlsl-iomapping"
-        | "hlsl-enable-16bit-types"
-        | "hlsl-dx9-compatible"
-        | "hlsl-dx-position-w"
-        | "flatten-uniform-arrays"
-        | "flatten-uniform-array"
-        | "fua"
-        | "uniform-base"
-        | "set-block-storage"
-        | "sbs"
-        | "set-atomic-counter-block"
-        | "sacb"
-        | "set-default-uniform-block"
-        | "sdub" => return Err(Exit::out_of_scope(&argument)),
         "preamble-text" | "p" => match cursor.take_next() {
             Some(text) => options.macros.push(Macro::Text(first_line(&text))),
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
-        "lto" => {
-            return Err(Exit::detailed(
-                "link time optimization is part of -O and -Os for a program linked with -l",
-                &argument,
-            ));
-        }
         "validate-io" => options.validate_io = true,
         "target-gpu" => match cursor.take_next() {
             Some(name) => match TargetGpu::from_name(&name) {
@@ -307,22 +271,10 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             },
             None => return Err(Exit::detailed("no <id>:<value> provided", word)),
         },
-        "bindings-per-resource-type" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "a binding space per resource type",
-            ));
-        }
         "invert-y" | "iy" => options.invert_y = true,
         "nan-clamp" => options.nan_clamp = true,
         "discard-is-terminate" => options.discard_is_terminate = true,
         "enhanced-msgs" => options.enhanced_messages = true,
-        "dump-builtin-symbols" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "dumping the built-in symbol table",
-            ));
-        }
         "reflect-strict-array-suffix" => options.reflect_options.strict_array_suffix = true,
         "reflect-basic-array-suffix" => options.reflect_options.basic_array_suffix = true,
         "reflect-intermediate-io" => options.reflect_options.intermediate_io = true,
@@ -357,7 +309,6 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
         'd' if argument == "-dumpversion" || argument == "-dumpfullversion" => {
             options.version = Some(VersionDump::Bare);
         }
-        'D' if rest.is_empty() => return Err(Exit::out_of_scope("-D")),
         'D' => {
             let definition = attached(&argument, "-D<name[=def]>")?;
             options.macros.push(Macro::Define(first_line(definition)));
@@ -367,7 +318,6 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             options.macros.push(Macro::Undefine(first_line(name)));
         }
         'E' => options.preprocess = true,
-        'G' | 'u' | 'R' | 'f' => return Err(Exit::out_of_scope(&argument)),
         'H' => {
             options.disassemble = true;
             if !options.spirv {
@@ -422,7 +372,6 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
         }
         'h' => return Err(Exit::Usage),
         'l' => options.link = true,
-        'm' => return Err(Exit::unsupported(&argument, "memory leak mode")),
         'o' => match cursor.take_next() {
             Some(output) => options.output = Some(output),
             None => return Err(Exit::error("no <file> provided for -o")),

@@ -304,10 +304,6 @@ fn bad_optimization_options_are_rejected() -> TestResult {
             &["--specialize", "1=2"],
             "Error: specialize: `1=2` is not <id>:<value>",
         ),
-        (
-            &["-l", "--lto"],
-            "Error: --lto: link time optimization is part of -O and -Os for a program linked with -l",
-        ),
     ] {
         let mut command = vec!["-V", "shader.frag"];
         command.extend_from_slice(options);

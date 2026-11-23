@@ -201,7 +201,8 @@ fn cases() -> Vec<Case> {
             "target-env-bad",
             &["--target-env", "vulkan9", TARGET_SHADER],
             &[TARGET_SHADER],
-        ),
+        )
+        .exits(1, "rglsl lists only the Vulkan and SPIR-V targets, not opengl"),
         Case::new(
             "spirv-without-client",
             &["--target-env", "spirv1.3", TARGET_SHADER],
@@ -664,8 +665,10 @@ fn cases() -> Vec<Case> {
             &["spv.targetOpenGL.vert"],
         )
         .rejected("OpenGL SPIR-V is out of scope"),
-        Case::new("D-hlsl", &["-D", "-V", TARGET_SHADER], &[TARGET_SHADER])
-            .rejected("HLSL is out of scope"),
+        Case::new("D-hlsl", &["-D", "-V", TARGET_SHADER], &[TARGET_SHADER]).exits(
+            1,
+            "glslang reads -D without a name as HLSL input; for rglsl it is a macro definition without a name",
+        ),
         Case::new(
             "glsl-version",
             &["--glsl-version", "450", "-V", TARGET_SHADER],
