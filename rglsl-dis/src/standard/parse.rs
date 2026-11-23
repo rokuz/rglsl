@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use super::number::{Encoding, Number};
 use super::tables::{self, Kind, Operand, Quantifier};
+use crate::string::decode_string;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Printed {
@@ -44,19 +45,6 @@ impl Parsed<'_> {
             .map(|operand| decode_string(self.words.get(operand.offset..).unwrap_or_default()))
             .unwrap_or_default()
     }
-}
-
-pub(super) fn decode_string(words: &[u32]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for word in words {
-        for byte in word.to_le_bytes() {
-            if byte == 0 {
-                return bytes;
-            }
-            bytes.push(byte);
-        }
-    }
-    bytes
 }
 
 #[derive(Debug, Default)]

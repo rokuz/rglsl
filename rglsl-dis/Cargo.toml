@@ -3,7 +3,7 @@ name = "rglsl-dis"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "Text forms of SPIR-V binaries for rglsl: glslang's and SPIRV-Tools' disassembly, hexadecimal text"
+description = "SPIR-V binaries for rglsl: glslang's and SPIRV-Tools' disassembly, hexadecimal text, reflection"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
@@ -13,6 +13,8 @@ exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 
 [dependencies]
+rglsl-types.workspace = true
+spirv.workspace = true
 
 [lints]
 workspace = true

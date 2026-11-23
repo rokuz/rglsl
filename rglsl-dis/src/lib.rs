@@ -2,7 +2,9 @@
 
 mod glslang;
 mod hex;
+pub mod reflection;
 mod standard;
+mod string;
 
 pub use hex::hex_text;
 
