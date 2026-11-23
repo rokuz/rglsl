@@ -27,6 +27,13 @@ enum Folded {
     No,
 }
 
+#[derive(Clone, Copy)]
+enum HeapStep {
+    Same,
+    Member(u32),
+    Element,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Place {
     pub pointer: Handle<Expression>,
@@ -542,46 +549,60 @@ impl<'a> FunctionLowerer<'_, 'a> {
 
     pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
         let module = &self.lw.module;
-        let mut steps = Vec::new();
+        let mut known = self.heap_pointees.borrow_mut();
+        let mut chain = Vec::new();
         let mut current = pointer;
-        let root = loop {
+        let mut pointee = loop {
+            if let Some(&pointee) = known.get(&current) {
+                break pointee;
+            }
             match self.expressions[current] {
                 Expression::GlobalVariable(handle) => {
                     let global = &module.global_variables[handle];
-                    break match global.space {
+                    let pointee = match global.space {
                         AddressSpace::DescriptorHeap(_) => Some(global.ty),
                         _ => None,
                     };
+                    known.insert(current, pointee);
+                    break pointee;
                 }
-                Expression::HeapOffset { pointer, .. } => current = pointer,
+                Expression::HeapOffset { pointer, .. } => {
+                    chain.push((current, HeapStep::Same));
+                    current = pointer;
+                }
                 Expression::AccessIndex { base, index } => {
-                    steps.push(Some(index));
+                    chain.push((current, HeapStep::Member(index)));
                     current = base;
                 }
                 Expression::Access { base, .. } => {
-                    steps.push(None);
+                    chain.push((current, HeapStep::Element));
                     current = base;
                 }
-                _ => break None,
+                _ => {
+                    known.insert(current, None);
+                    break None;
+                }
             }
         };
         let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
             crate::TypeInner::Array { base, .. } => Some(base),
             _ => None,
         };
-        steps
-            .into_iter()
-            .rev()
-            .try_fold(root?, |ty, step| match step {
-                Some(index) => match module.types[ty].inner {
+        for (handle, step) in chain.into_iter().rev() {
+            pointee = pointee.and_then(|ty| match step {
+                HeapStep::Same => Some(ty),
+                HeapStep::Member(index) => match module.types[ty].inner {
                     crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
                         .ok()
                         .and_then(|index| members.get(index))
                         .map(|member| member.ty),
                     _ => element(ty),
                 },
-                None => element(ty),
-            })
+                HeapStep::Element => element(ty),
+            });
+            known.insert(handle, pointee);
+        }
+        pointee
     }
 
     pub(super) fn buffer_pointee(

@@ -41,6 +41,7 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub(super) precision: crate::PrecisionExpressions,
     pub(super) stepped: Option<Handle<Expression>>,
     pub(super) physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    pub(super) heap_pointees: RefCell<FastHashMap<Handle<Expression>, Option<Handle<crate::Type>>>>,
     pub(super) argument_types: Vec<Handle<crate::Type>>,
     jump_targets: Vec<JumpTarget>,
 }
@@ -59,6 +60,7 @@ pub(super) struct Scratch {
     precision: crate::PrecisionExpressions,
     stepped: Option<Handle<Expression>>,
     physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    heap_pointees: RefCell<FastHashMap<Handle<Expression>, Option<Handle<crate::Type>>>>,
     argument_types: Vec<Handle<crate::Type>>,
     jump_targets: Vec<JumpTarget>,
 }
@@ -157,6 +159,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             precision: crate::PrecisionExpressions::default(),
             stepped: None,
             physical_bases: BTreeMap::new(),
+            heap_pointees: RefCell::new(FastHashMap::default()),
             argument_types: Vec::new(),
             jump_targets: Vec::new(),
         }
@@ -180,6 +183,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             precision: crate::PrecisionExpressions::default(),
             stepped: None,
             physical_bases: BTreeMap::new(),
+            heap_pointees: RefCell::new(FastHashMap::default()),
             argument_types: Vec::new(),
             jump_targets: Vec::new(),
         };
@@ -207,6 +211,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         core::mem::swap(&mut self.precision, &mut scratch.precision);
         core::mem::swap(&mut self.stepped, &mut scratch.stepped);
         core::mem::swap(&mut self.physical_bases, &mut scratch.physical_bases);
+        core::mem::swap(&mut self.heap_pointees, &mut scratch.heap_pointees);
         core::mem::swap(&mut self.argument_types, &mut scratch.argument_types);
         core::mem::swap(&mut self.jump_targets, &mut scratch.jump_targets);
     }
