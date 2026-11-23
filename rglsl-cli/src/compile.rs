@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rglsl_link::{
     Build, CompileOptions, Compiler, DiagnosticFormat, Diagnostics, Input, ObjectModule,
-    ProgramOptions, Reflection, ResourceLimits, ShaderStage, Source, reflection,
+    ProgramOptions, ResourceLimits, ShaderStage, Source, spirv_reflection,
 };
 
 use crate::args::{EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Options, VersionDump};
@@ -407,11 +407,50 @@ impl<'a> Session<'a> {
         self.emit(&build)
     }
 
-    fn emit(&mut self, build: &Build) -> Result<i32, Exit> {
+    fn spirv_reflection_json(&self, build: &Build) -> Result<Option<String>, i32> {
+        if self.options.spirv_reflection_json.is_none() {
+            return Ok(None);
+        }
         let mut reflections = Vec::with_capacity(build.stages.len());
         for stage in &build.stages {
-            let binary = match stage.result {
-                Ok(ref binary) => binary,
+            let Ok(ref words) = stage.result else {
+                return Ok(None);
+            };
+            match spirv_reflection::reflect(words) {
+                Ok(reflection) => reflections.push(reflection),
+                Err(error) => {
+                    if !self.options.suppress_info {
+                        output::err!(
+                            "ERROR: {}: cannot reflect the SPIR-V of the {} stage: {error}",
+                            stage.name,
+                            stage.stage.name()
+                        );
+                    }
+                    return Err(EXIT_LINK);
+                }
+            }
+        }
+        spirv_reflection::program_json(&reflections)
+            .map(Some)
+            .map_err(|error| {
+                if !self.options.suppress_info {
+                    output::err!("ERROR: Linking stages: {error}");
+                }
+                EXIT_LINK
+            })
+    }
+
+    fn emit(&mut self, build: &Build) -> Result<i32, Exit> {
+        let json = match self.spirv_reflection_json(build) {
+            Ok(json) => json,
+            Err(code) => {
+                self.not_generated();
+                return Ok(code);
+            }
+        };
+        for stage in &build.stages {
+            let words = match stage.result {
+                Ok(ref words) => words,
                 Err(ref diagnostic) => {
                     if !self.options.suppress_info {
                         output::err!("{}\n", diagnostic.format(DiagnosticFormat::default()));
@@ -420,8 +459,6 @@ impl<'a> Session<'a> {
                     return Ok(EXIT_COMPILE);
                 }
             };
-            let words = &binary.words;
-            reflections.push(&binary.reflection);
             let path = self
                 .options
                 .output
@@ -451,29 +488,15 @@ impl<'a> Session<'a> {
                 }
             }
         }
-        self.write_reflection(&reflections)
-    }
-
-    fn write_reflection(&self, reflections: &[&Reflection]) -> Result<i32, Exit> {
-        let Some(ref path) = self.options.reflection_json else {
-            return Ok(EXIT_SUCCESS);
-        };
-        let json = match reflection::program_json(reflections) {
-            Ok(json) => json,
-            Err(error) => {
-                if !self.options.suppress_info {
-                    output::err!("ERROR: Linking stages: {error}");
-                }
-                return Ok(EXIT_LINK);
+        if let (Some(path), Some(json)) = (&self.options.spirv_reflection_json, json) {
+            if fs::write(path, json).is_err() {
+                return Err(Exit::Printed(format!(
+                    "ERROR: Failed to open file: {path}\n"
+                )));
             }
-        };
-        if fs::write(path, json).is_ok() {
-            Ok(EXIT_SUCCESS)
-        } else {
-            Err(Exit::Printed(format!(
-                "ERROR: Failed to open file: {path}\n"
-            )))
+            self.outputs.push(path.clone());
         }
+        Ok(EXIT_SUCCESS)
     }
 
     fn write_depfile(&self, units: &[Unit]) -> Result<(), Exit> {

@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use rglsl_link::reflection::{
-    self, BlockLayout, DescriptorHeap, DescriptorType, Format, InterfaceVariable, PipelineLayout,
-    Reflection, ScalarKind, ScalarType, ScalarValue, StageFlags, WorkgroupDimension,
+use rglsl_link::spirv_reflection::{
+    self, BindingUse, BlockLayout, DescriptorHeap, DescriptorType, Format, InterfaceVariable,
+    PipelineLayout, Reflection, ScalarKind, ScalarType, ScalarValue, ShaderStageMask,
+    WorkgroupDimension, vulkan_stage_flags,
 };
 use rglsl_link::{
     CompileOptions, OptLevel, OptOptions, ProgramOptions, ShaderStage, compile_and_link,
@@ -34,14 +35,22 @@ fn reflect_rglsl(source: &str, stage: ShaderStage, vulkan: (u8, u8)) -> TestResu
         &program_options(vulkan),
     )?;
     let binary = program.stage(stage).ok_or("missing stage")?;
-    assert_eq!(binary.reflection, reflection::reflect(&binary.words)?);
-    Ok(binary.reflection.clone())
+    let reflection = binary.spirv_reflection()?;
+    assert_eq!(reflection, spirv_reflection::reflect(&binary.words)?);
+    Ok(reflection)
 }
 
-fn glslang() -> Option<PathBuf> {
+fn glslang() -> TestResult<Option<PathBuf>> {
     let configured = std::env::var_os("RGLSL_GLSLANG").map(PathBuf::from);
     let pinned = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/oracles/bin/glslang");
-    configured.or(Some(pinned)).filter(|path| path.is_file())
+    let found = configured.or(Some(pinned)).filter(|path| path.is_file());
+    if found.is_none() && std::env::var_os("RGLSL_REQUIRE_ORACLES").is_some() {
+        return Err(
+            "RGLSL_REQUIRE_ORACLES is set but there is no glslang at target/oracles/bin/glslang or in RGLSL_GLSLANG"
+                .into(),
+        );
+    }
+    Ok(found)
 }
 
 fn reflect_glslang(
@@ -50,7 +59,7 @@ fn reflect_glslang(
     stage: ShaderStage,
     vulkan: (u8, u8),
 ) -> TestResult<Option<Reflection>> {
-    let Some(glslang) = glslang() else {
+    let Some(glslang) = glslang()? else {
         println!(
             "skipped the glslang cross-check: no glslang at target/oracles/bin/glslang or in RGLSL_GLSLANG"
         );
@@ -82,7 +91,7 @@ fn reflect_glslang(
         .chunks_exact(4)
         .map(|chunk| <[u8; 4]>::try_from(chunk).map(u32::from_le_bytes))
         .collect::<Result<Vec<u32>, _>>()?;
-    Ok(Some(reflection::reflect(&words)?))
+    Ok(Some(spirv_reflection::reflect(&words)?))
 }
 
 fn without_ids(reflection: &Reflection) -> Reflection {
@@ -133,6 +142,22 @@ fn bindings(reflection: &Reflection) -> Vec<(u32, u32, DescriptorType, u32, Opti
             )
         })
         .collect()
+}
+
+fn blocks(reflection: &Reflection) -> Vec<Option<(u32, Option<u32>)>> {
+    reflection
+        .descriptor_bindings
+        .iter()
+        .map(|binding| {
+            binding
+                .block
+                .map(|block: BlockLayout| (block.size, block.runtime_array_stride))
+        })
+        .collect()
+}
+
+const fn use_of(binding: BindingUse) -> (ShaderStage, DescriptorType, u32) {
+    (binding.stage, binding.descriptor_type, binding.count)
 }
 
 const fn scalar(kind: ScalarKind, width: u32) -> ScalarType {
@@ -288,22 +313,12 @@ fn every_descriptor_type() -> TestResult {
             ),
         ]
     );
-    let blocks: Vec<Option<BlockLayout>> = reflection
-        .descriptor_bindings
-        .iter()
-        .map(|binding| binding.block)
-        .collect();
+    let blocks = blocks(&reflection);
     assert_eq!(
-        blocks.get(7).copied().flatten().map(|block| block.size),
+        blocks.get(7).copied().flatten().map(|(size, _)| size),
         Some(16)
     );
-    assert_eq!(
-        blocks.get(8).copied().flatten(),
-        Some(BlockLayout {
-            size: 16,
-            runtime_array_stride: Some(16),
-        })
-    );
+    assert_eq!(blocks.get(8).copied().flatten(), Some((16, Some(16))));
     assert!(blocks.iter().take(7).all(Option::is_none));
     Ok(())
 }
@@ -457,27 +472,9 @@ fn block_layouts() -> TestResult {
         }
     ";
     let reflection = cross_check("layouts", source, ShaderStage::Compute, VULKAN_1_2)?;
-    let blocks: Vec<Option<BlockLayout>> = reflection
-        .descriptor_bindings
-        .iter()
-        .map(|binding| binding.block)
-        .collect();
     assert_eq!(
-        blocks,
-        [
-            Some(BlockLayout {
-                size: 176,
-                runtime_array_stride: None,
-            }),
-            Some(BlockLayout {
-                size: 40,
-                runtime_array_stride: Some(8),
-            }),
-            Some(BlockLayout {
-                size: 16,
-                runtime_array_stride: None,
-            }),
-        ]
+        blocks(&reflection),
+        [Some((176, None)), Some((40, Some(8))), Some((16, None))]
     );
     Ok(())
 }
@@ -568,7 +565,7 @@ fn specialization_constants_and_local_size_id() -> TestResult {
                 2,
                 Some("scale"),
                 FLOAT,
-                ScalarValue::Float(u64::from(1.5_f32.to_bits()))
+                ScalarValue::FloatBits(u64::from(1.5_f32.to_bits()))
             ),
             (3, None, scalar(ScalarKind::Uint, 32), ScalarValue::Uint(1)),
             (
@@ -581,7 +578,7 @@ fn specialization_constants_and_local_size_id() -> TestResult {
                 5,
                 Some("highPrecision"),
                 scalar(ScalarKind::Float, 64),
-                ScalarValue::Float(2.25_f64.to_bits())
+                ScalarValue::FloatBits(2.25_f64.to_bits())
             ),
             (
                 6,
@@ -745,12 +742,13 @@ fn stages_merge_into_a_pipeline_layout() -> TestResult {
         ],
         &program_options(VULKAN_1_0),
     )?;
-    let layout = program.pipeline_layout()?;
+    let reflections = program.spirv_reflections()?;
+    let layout = PipelineLayout::new(&reflections)?;
     let [set] = layout.sets.as_slice() else {
         return Err("expected one descriptor set".into());
     };
     assert_eq!(set.set, 0);
-    let merged: Vec<(u32, DescriptorType, u32, u32)> = set
+    let merged: Vec<(u32, DescriptorType, u32, ShaderStageMask)> = set
         .bindings
         .iter()
         .map(|binding| {
@@ -758,32 +756,42 @@ fn stages_merge_into_a_pipeline_layout() -> TestResult {
                 binding.binding,
                 binding.descriptor_type,
                 binding.count,
-                binding.stages.bits(),
+                binding.stages,
             )
         })
         .collect();
-    let both = StageFlags::of(ShaderStage::Vertex) | StageFlags::of(ShaderStage::Fragment);
     assert_eq!(
         merged,
         [
-            (0, DescriptorType::UniformBuffer, 1, both.bits()),
+            (
+                0,
+                DescriptorType::UniformBuffer,
+                1,
+                ShaderStageMask::VERTEX | ShaderStageMask::FRAGMENT
+            ),
             (
                 1,
                 DescriptorType::CombinedImageSampler,
                 1,
-                StageFlags::of(ShaderStage::Fragment).bits()
+                ShaderStageMask::FRAGMENT
             ),
         ]
+    );
+    assert_eq!(
+        set.bindings
+            .first()
+            .map(|binding| vulkan_stage_flags(binding.stages)),
+        Some(0x11)
     );
     let ranges: Vec<(u32, u32, u32)> = layout
         .push_constant_ranges
         .iter()
-        .map(|range| (range.stages.bits(), range.offset, range.size))
+        .map(|range| (vulkan_stage_flags(range.stages), range.offset, range.size))
         .collect();
     assert_eq!(ranges, [(0x1, 0, 64), (0x10, 64, 16)]);
-    let json = program.reflection_json()?;
+    let json = spirv_reflection::program_json(&reflections)?;
     assert!(json.contains("\"pipeline_layout\""), "{json}");
-    assert!(json.contains("\"vertex\",\n"), "{json}");
+    assert!(json.contains("\"vert\",\n"), "{json}");
     Ok(())
 }
 
@@ -800,23 +808,27 @@ fn conflicting_bindings_are_an_error() -> TestResult {
         ShaderStage::Fragment,
         VULKAN_1_0,
     )?;
-    let Err(error) = PipelineLayout::new(&[&vertex, &fragment]) else {
+    let Err(error) = PipelineLayout::new([&vertex, &fragment]) else {
         return Err("conflicting bindings were merged".into());
     };
     assert_eq!((error.set, error.binding), (0, 0));
     assert_eq!(
-        error.first,
+        use_of(error.first),
         (ShaderStage::Vertex, DescriptorType::UniformBuffer, 1)
     );
     assert_eq!(
-        error.second,
+        use_of(error.second),
         (
             ShaderStage::Fragment,
             DescriptorType::CombinedImageSampler,
             1
         )
     );
-    assert!(error.to_string().contains("set 0 binding 0"), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "set 0 binding 0 is uniform_buffer x1 in the vertex stage but combined_image_sampler x1 in the fragment stage"
+    );
+    assert!(spirv_reflection::program_json([&vertex, &fragment]).is_err());
     Ok(())
 }
 
@@ -885,12 +897,13 @@ fn only_optimization_removes_unused_resources() -> TestResult {
             ..program_options(VULKAN_1_0)
         },
     )?;
-    let binary = optimized
+    let reflection = optimized
         .stage(ShaderStage::Fragment)
-        .ok_or("missing stage")?;
-    assert!(binary.reflection.descriptor_bindings.is_empty());
-    assert!(binary.reflection.push_constants.is_empty());
-    assert!(binary.reflection.inputs.is_empty());
-    assert_eq!(binary.reflection.outputs.len(), 1);
+        .ok_or("missing stage")?
+        .spirv_reflection()?;
+    assert!(reflection.descriptor_bindings.is_empty());
+    assert!(reflection.push_constants.is_empty());
+    assert!(reflection.inputs.is_empty());
+    assert_eq!(reflection.outputs.len(), 1);
     Ok(())
 }

@@ -911,7 +911,7 @@ void main() { gl_Position = position * tint + constants.offset; }
         &directory,
         &[
             "-V",
-            "--reflection-json",
+            "--spirv-reflection-json",
             "reflection.json",
             "-o",
             "program.spv",
@@ -925,13 +925,13 @@ void main() { gl_Position = position * tint + constants.offset; }
         .filter(|character| !character.is_whitespace())
         .collect();
     for expected in [
-        "\"stage\":\"vertex\"",
-        "\"stage\":\"fragment\"",
+        "\"stage\":\"vert\"",
+        "\"stage\":\"frag\"",
         "\"type\":\"uniform_buffer\"",
         "\"type\":\"combined_image_sampler\"",
         "\"pipeline_layout\":{",
-        "\"name\":\"Block\",\"stages\":[\"vertex\",\"fragment\"]",
-        "\"push_constant_ranges\":[{\"stages\":[\"vertex\"],\"bank\":null,\"offset\":0,\"size\":16}]",
+        "\"name\":\"Block\",\"stages\":[\"vert\",\"frag\"]",
+        "\"push_constant_ranges\":[{\"stages\":[\"vert\"],\"bank\":null,\"offset\":0,\"size\":16}]",
     ] {
         assert!(json.contains(expected), "{expected}\n{json}");
     }
@@ -947,7 +947,7 @@ void main() { color = texture(image, vec2(0.5)); }
         &directory,
         &[
             "-V",
-            "--reflection-json",
+            "--spirv-reflection-json",
             "conflict.json",
             "-o",
             "conflict.spv",
@@ -957,13 +957,17 @@ void main() { color = texture(image, vec2(0.5)); }
     )?;
     assert_eq!(run.code, Some(3), "{}", run.stderr);
     assert!(
-        run.stderr.contains("set 0 binding 1 is uniform_buffer x1"),
+        run.stderr.contains(
+            "set 0 binding 1 is uniform_buffer x1 in the vertex stage but combined_image_sampler x1 in the fragment stage"
+        ),
         "{}",
         run.stderr
     );
+    assert!(!directory.join("conflict.spv").exists());
+    assert!(!directory.join("conflict.json").exists());
     let run = rglsl(
         &directory,
-        &["-l", "--reflection-json", "none.json", "shader.frag"],
+        &["-l", "--spirv-reflection-json", "none.json", "shader.frag"],
     )?;
     assert_eq!(run.code, Some(1));
     assert!(

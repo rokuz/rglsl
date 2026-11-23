@@ -1,27 +1,33 @@
-use std::fmt::{Display, Write as _};
+use std::fmt::{Debug, Display, Write as _};
 
-use super::pipeline::stage_name;
+use rglsl_types::ShaderStageMask;
+
+use super::pipeline::LayoutBuilder;
 use super::{
     DescriptorBinding, InterfaceVariable, LayoutError, PipelineLayout, PushConstantBlock,
-    Reflection, ScalarKind, ScalarType, ScalarValue, SpecializationConstant, StageFlags,
-    WorkgroupDimension,
+    Reflection, ScalarKind, ScalarType, ScalarValue, SpecializationConstant, WorkgroupDimension,
 };
+
+#[derive(Debug, Clone, Copy)]
+struct Scope {
+    has_items: bool,
+}
 
 #[derive(Debug, Default)]
 struct Writer {
     text: String,
-    open: Vec<bool>,
+    scopes: Vec<Scope>,
 }
 
 impl Writer {
     fn key(&mut self, key: Option<&str>) {
-        if let Some(first) = self.open.last_mut() {
-            if !*first {
+        if let Some(scope) = self.scopes.last_mut() {
+            if scope.has_items {
                 self.text.push(',');
             }
-            *first = false;
+            scope.has_items = true;
             self.text.push('\n');
-            self.indent(self.open.len());
+            self.indent(self.scopes.len());
         }
         if let Some(key) = key {
             self.quoted(key);
@@ -36,13 +42,13 @@ impl Writer {
     fn begin(&mut self, key: Option<&str>, bracket: char) {
         self.key(key);
         self.text.push(bracket);
-        self.open.push(true);
+        self.scopes.push(Scope { has_items: false });
     }
 
     fn end(&mut self, bracket: char) {
-        if self.open.pop() == Some(false) {
+        if self.scopes.pop().is_some_and(|scope| scope.has_items) {
             self.text.push('\n');
-            self.indent(self.open.len());
+            self.indent(self.scopes.len());
         }
         self.text.push(bracket);
     }
@@ -91,6 +97,11 @@ impl Writer {
         let _ = write!(self.text, "{value}");
     }
 
+    fn float(&mut self, key: Option<&str>, value: impl Debug) {
+        self.key(key);
+        let _ = write!(self.text, "{value:?}");
+    }
+
     fn null(&mut self, key: Option<&str>) {
         self.key(key);
         self.text.push_str("null");
@@ -110,17 +121,17 @@ impl Writer {
         }
     }
 
-    fn stages(&mut self, key: &str, stages: StageFlags) {
+    fn stages(&mut self, key: &str, stages: ShaderStageMask) {
         self.array(Some(key));
         for stage in stages.stages() {
-            self.string(None, stage_name(stage));
+            self.string(None, stage.extension());
         }
         self.end_array();
     }
 
     fn reflection(&mut self, key: Option<&str>, reflection: &Reflection) {
         self.object(key);
-        self.string(Some("stage"), stage_name(reflection.stage));
+        self.string(Some("stage"), reflection.stage.extension());
         self.string(Some("entry_point"), &reflection.entry_point);
         match reflection.local_size {
             Some(dimensions) => {
@@ -239,20 +250,23 @@ impl Writer {
         self.scalar(constant.scalar);
         self.end_object();
         let key = Some("default");
-        match (constant.default, constant.scalar.kind) {
-            (ScalarValue::Bool(value), _) => {
+        match constant.default {
+            ScalarValue::Bool(value) => {
                 self.key(key);
                 self.text.push_str(if value { "true" } else { "false" });
             }
-            (ScalarValue::Int(value), _) => self.number(key, value),
-            (ScalarValue::Uint(value), _)
-            | (ScalarValue::Float(value), ScalarKind::EncodedFloat(_)) => {
-                self.number(key, value);
+            ScalarValue::Int(value) => self.number(key, value),
+            ScalarValue::Uint(value) => self.number(key, value),
+            ScalarValue::FloatBits(bits)
+                if matches!(constant.scalar.kind, ScalarKind::EncodedFloat(_)) =>
+            {
+                self.number(key, bits);
             }
-            (ScalarValue::Float(bits), _) => match float(bits, constant.scalar.width) {
-                Some(value) if value.is_finite() => self.number(key, value),
+            ScalarValue::FloatBits(bits) => match float(bits, constant.scalar.width) {
+                Some(Float::Single(value)) if value.is_finite() => self.float(key, value),
+                Some(Float::Double(value)) if value.is_finite() => self.float(key, value),
                 Some(value) if value.is_nan() => self.string(key, "NaN"),
-                Some(value) if value > 0.0 => self.string(key, "Infinity"),
+                Some(value) if value.is_positive() => self.string(key, "Infinity"),
                 Some(_) => self.string(key, "-Infinity"),
                 None => self.number(key, bits),
             },
@@ -299,11 +313,33 @@ impl Writer {
     }
 }
 
-fn float(bits: u64, width: u32) -> Option<f64> {
+#[derive(Debug, Clone, Copy)]
+enum Float {
+    Single(f32),
+    Double(f64),
+}
+
+impl Float {
+    const fn is_nan(self) -> bool {
+        match self {
+            Self::Single(value) => value.is_nan(),
+            Self::Double(value) => value.is_nan(),
+        }
+    }
+
+    const fn is_positive(self) -> bool {
+        match self {
+            Self::Single(value) => value.is_sign_positive(),
+            Self::Double(value) => value.is_sign_positive(),
+        }
+    }
+}
+
+fn float(bits: u64, width: u32) -> Option<Float> {
     match width {
-        16 => Some(half(u16::try_from(bits).ok()?)),
-        32 => Some(f64::from(f32::from_bits(u32::try_from(bits).ok()?))),
-        64 => Some(f64::from_bits(bits)),
+        16 => Some(Float::Double(half(u16::try_from(bits).ok()?))),
+        32 => Some(Float::Single(f32::from_bits(u32::try_from(bits).ok()?))),
+        64 => Some(Float::Double(f64::from_bits(bits))),
         _ => None,
     }
 }
@@ -336,16 +372,19 @@ impl PipelineLayout {
     }
 }
 
-pub fn program_json(stages: &[&Reflection]) -> Result<String, LayoutError> {
-    let layout = PipelineLayout::new(stages)?;
+pub fn program_json<'a>(
+    stages: impl IntoIterator<Item = &'a Reflection>,
+) -> Result<String, LayoutError> {
+    let mut layout = LayoutBuilder::default();
     let mut writer = Writer::default();
     writer.object(None);
     writer.array(Some("stages"));
     for reflection in stages {
+        layout.add(reflection)?;
         writer.reflection(None, reflection);
     }
     writer.end_array();
-    writer.layout(Some("pipeline_layout"), &layout);
+    writer.layout(Some("pipeline_layout"), &layout.finish());
     writer.end_object();
     Ok(writer.finish())
 }

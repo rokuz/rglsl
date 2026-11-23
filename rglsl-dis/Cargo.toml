@@ -13,6 +13,7 @@ exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 
 [dependencies]
+bitflags.workspace = true
 rglsl-types.workspace = true
 spirv.workspace = true
 

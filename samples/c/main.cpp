@@ -14,7 +14,7 @@ struct Deleter {
     void operator()(rglsl_object *object) const { rglsl_object_destroy(object); }
     void operator()(rglsl_program *program) const { rglsl_program_destroy(program); }
     void operator()(rglsl_diagnostics *diagnostics) const { rglsl_diagnostics_destroy(diagnostics); }
-    void operator()(rglsl_reflection *reflection) const { rglsl_reflection_destroy(reflection); }
+    void operator()(rglsl_spirv_reflection *reflection) const { rglsl_spirv_reflection_destroy(reflection); }
 };
 
 template <typename T>
@@ -115,9 +115,9 @@ int main(int argc, char **argv)
     std::printf("C++: compute stage, entry point %s, %zu words -> %s\n",
                 rglsl_program_entry_point(program.get(), 0), word_count, path.c_str());
 
-    rglsl_reflection *raw_reflection = nullptr;
-    code = rglsl_reflect(binary.data(), binary.size(), &raw_reflection, &raw_diagnostics);
-    Handle<rglsl_reflection> reflection(raw_reflection);
+    rglsl_spirv_reflection *raw_reflection = nullptr;
+    code = rglsl_spirv_reflect(binary.data(), binary.size(), &raw_reflection, &raw_diagnostics);
+    Handle<rglsl_spirv_reflection> reflection(raw_reflection);
     diagnostics.reset(raw_diagnostics);
     if (code != RGLSL_RESULT_OK) {
         std::fprintf(stderr, "%s\n", rglsl_diagnostics_text(diagnostics.get()));
@@ -125,22 +125,31 @@ int main(int argc, char **argv)
     }
     uint32_t local_size[3] = {0, 0, 0};
     for (uint32_t dimension = 0; dimension < 3; ++dimension) {
-        if (rglsl_reflection_local_size(reflection.get(), dimension, &local_size[dimension],
-                                        nullptr, nullptr) != RGLSL_RESULT_OK) {
+        bool present = false;
+        bool specialized = false;
+        uint32_t spec_id = 0;
+        if (rglsl_spirv_reflection_local_size(reflection.get(), dimension, &present,
+                                              &local_size[dimension], &specialized,
+                                              &spec_id) != RGLSL_RESULT_OK ||
+            !present) {
             return 1;
         }
     }
     uint32_t set = 0;
     uint32_t binding = 0;
+    uint32_t count = 0;
+    uint32_t variable_id = 0;
+    bool is_block = false;
     uint32_t block_size = 0;
     uint32_t stride = 0;
     rglsl_descriptor_type type = RGLSL_DESCRIPTOR_TYPE_SAMPLER;
-    if (rglsl_reflection_binding_count(reflection.get()) != 1 ||
-        rglsl_reflection_binding(reflection.get(), 0, &set, &binding, &type, nullptr,
-                                 nullptr) != RGLSL_RESULT_OK ||
+    if (rglsl_spirv_reflection_binding_count(reflection.get()) != 1 ||
+        rglsl_spirv_reflection_binding(reflection.get(), 0, &set, &binding, &type, &count,
+                                       &variable_id) != RGLSL_RESULT_OK ||
         type != RGLSL_DESCRIPTOR_TYPE_STORAGE_BUFFER ||
-        rglsl_reflection_binding_block(reflection.get(), 0, &block_size, &stride) !=
-            RGLSL_RESULT_OK) {
+        rglsl_spirv_reflection_binding_block(reflection.get(), 0, &is_block, &block_size,
+                                             &stride) != RGLSL_RESULT_OK ||
+        !is_block) {
         return 1;
     }
     std::printf("C++: local size %u x %u x %u, storage buffer at set %u binding %u, "

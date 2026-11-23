@@ -131,13 +131,6 @@ rglsl's own options:
                                     an unknown name is an error
   --opt-validate-each               validates the IR after every optimizer
                                     pass (on by default in debug builds)
-  --reflection-json <file>          writes the reflection of the generated
-                                    SPIR-V as JSON: per stage the entry point,
-                                    local size, descriptor bindings, push
-                                    constants, inputs, outputs and
-                                    specialization constants, and the merged
-                                    pipeline layout; bindings that conflict
-                                    between stages are an error
   --specialize <id>:<value>[ <id>:<value>...]
                                     replaces the specialization constant
                                     <id> by <value> (true or false, a decimal
@@ -146,4 +139,13 @@ rglsl's own options:
                                     with or without -O; may be repeated; pairs
                                     are separated by spaces or commas; an id
                                     the program does not declare is an error
+  --spirv-reflection-json <file>    writes the reflection of the generated
+                                    SPIR-V as JSON: per stage the entry point,
+                                    local size, descriptor bindings, push
+                                    constants, inputs, outputs and
+                                    specialization constants, and the pipeline
+                                    layout of all stages, which are one linked
+                                    program (-V turns on -l); a binding whose
+                                    type or count differs between stages is a
+                                    link error, and then no file is written
 ";

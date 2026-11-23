@@ -8,7 +8,6 @@ use rglsl_link::{
 };
 
 use crate::ffi::Includer;
-use crate::reflection::Reflection;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,33 +269,26 @@ pub struct Program {
 
 #[derive(Debug)]
 struct StageBinary {
-    stage: Stage,
+    stage: ShaderStage,
     entry_point: CString,
     words: Vec<u32>,
-    reflection: Reflection,
 }
 
 impl StageBinary {
-    fn new(binary: rglsl_link::StageBinary) -> Self {
+    fn new(stage: ShaderStage, entry_point: &str, words: Vec<u32>) -> Self {
         Self {
-            stage: Stage::of(binary.stage),
-            entry_point: c_string(&binary.entry_point),
-            words: binary.words,
-            reflection: Reflection::new(binary.reflection),
+            stage,
+            entry_point: c_string(entry_point),
+            words,
         }
     }
 }
 
 impl Program {
-    pub(crate) fn stage_reflection(&self, index: usize) -> Option<&Reflection> {
-        self.stages.get(index).map(|binary| &binary.reflection)
-    }
-
-    pub(crate) fn reflections(&self) -> Vec<&rglsl_link::Reflection> {
+    pub(crate) fn stage_words(&self) -> impl ExactSizeIterator<Item = (ShaderStage, &[u32])> {
         self.stages
             .iter()
-            .map(|binary| binary.reflection.source())
-            .collect()
+            .map(|binary| (binary.stage, binary.words.as_slice()))
     }
 }
 
@@ -396,7 +388,7 @@ impl Failure {
         }
     }
 
-    fn argument(message: String) -> Self {
+    pub(crate) fn argument(message: String) -> Self {
         Self {
             code: RGLSL_RESULT_INVALID_ARGUMENT,
             diagnostics: Diagnostics::error(format!("invalid argument: {message}")),
@@ -878,7 +870,7 @@ fn built(build: rglsl_link::Build) -> Result<Program, Failure> {
     let mut errors = Vec::new();
     for output in build.stages {
         match output.result {
-            Ok(binary) => stages.push(StageBinary::new(binary)),
+            Ok(words) => stages.push(StageBinary::new(output.stage, &output.entry_point, words)),
             Err(diagnostic) => errors.push(diagnostic),
         }
     }
@@ -1186,7 +1178,11 @@ pub(crate) fn link(
         let linked = rglsl_link::link_spirv(&modules, options)
             .map_err(|errors| Failure::new(RGLSL_RESULT_LINK_FAILED, &errors))?;
         Ok(Program {
-            stages: linked.stages.into_iter().map(StageBinary::new).collect(),
+            stages: linked
+                .stages
+                .into_iter()
+                .map(|binary| StageBinary::new(binary.stage, &binary.entry_point, binary.words))
+                .collect(),
             warnings: Diagnostics::new(&linked.warnings),
             reflection: None,
             files_read: Vec::new(),
@@ -1207,7 +1203,7 @@ pub(crate) fn program_stage(
         return RGLSL_RESULT_INVALID_ARGUMENT;
     };
     query(program, RGLSL_RESULT_INVALID_ARGUMENT, |program| {
-        *stage = program.stages.get(index)?.stage;
+        *stage = Stage::of(program.stages.get(index)?.stage);
         Some(RGLSL_RESULT_OK)
     })
 }

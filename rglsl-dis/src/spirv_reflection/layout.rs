@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rglsl_types::stack::recurse;
 use spirv::StorageClass;
 
-use super::module::{Module, Type};
+use super::module::{DecorationFlags, Module, Type};
 use super::{BlockLayout, ReflectError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,10 +44,6 @@ pub(super) fn element_chain(
     }
 }
 
-fn overflow(id: u32) -> ReflectError {
-    ReflectError::Overflow(id)
-}
-
 impl<'m> Sizes<'m> {
     pub(super) const fn new(module: &'m Module) -> Self {
         Self {
@@ -83,12 +79,13 @@ impl<'m> Sizes<'m> {
 
     fn compute(&mut self, id: u32, matrix: Option<MatrixLayout>) -> Result<u32, ReflectError> {
         let module = self.module;
+        let overflow = ReflectError::SizeOverflow(id);
         match *module.ty(id)? {
             Type::Int { width, .. } | Type::Float { width, .. } => Ok(width.div_ceil(8)),
             Type::Vector { component, count } => self
                 .sized(component, None)?
                 .checked_mul(count)
-                .ok_or_else(|| overflow(id)),
+                .ok_or(overflow),
             Type::Matrix { column, columns } => match matrix {
                 Some(MatrixLayout {
                     stride,
@@ -97,16 +94,16 @@ impl<'m> Sizes<'m> {
                     let Type::Vector { count: rows, .. } = *module.ty(column)? else {
                         return Err(ReflectError::UnsizedType(column));
                     };
-                    stride.checked_mul(rows).ok_or_else(|| overflow(id))
+                    stride.checked_mul(rows).ok_or(overflow)
                 }
                 Some(MatrixLayout {
                     stride,
                     row_major: false,
-                }) => stride.checked_mul(columns).ok_or_else(|| overflow(id)),
+                }) => stride.checked_mul(columns).ok_or(overflow),
                 None => self
                     .sized(column, None)?
                     .checked_mul(columns)
-                    .ok_or_else(|| overflow(id)),
+                    .ok_or(overflow),
             },
             Type::Array { element, length } => {
                 let count = module.array_length(id, length)?;
@@ -114,28 +111,25 @@ impl<'m> Sizes<'m> {
                     Some(stride) => stride,
                     None => self.sized(element, matrix)?,
                 };
-                stride.checked_mul(count).ok_or_else(|| overflow(id))
+                stride.checked_mul(count).ok_or(overflow)
             }
             Type::RuntimeArray { .. } => Ok(0),
             Type::Struct { ref members } => {
                 let mut end = 0_u32;
-                for (index, &member) in members.iter().enumerate() {
-                    let index = u32::try_from(index).map_err(|_| overflow(id))?;
+                for (index, &member) in (0_u32..).zip(members) {
                     let decorations = module.member_decorations(id, index);
                     let matrix = decorations.matrix_stride.map(|stride| MatrixLayout {
                         stride,
-                        row_major: decorations.row_major,
+                        row_major: decorations.flags.contains(DecorationFlags::ROW_MAJOR),
                     });
                     let offset = decorations.offset.unwrap_or(end);
                     let size = self.sized(member, matrix)?;
-                    let member_end = offset.checked_add(size).ok_or_else(|| overflow(id))?;
+                    let member_end = offset.checked_add(size).ok_or(overflow)?;
                     end = end.max(member_end);
                 }
                 Ok(end)
             }
-            Type::Pointer { class, .. } if class == StorageClass::PhysicalStorageBuffer as u32 => {
-                Ok(8)
-            }
+            Type::Pointer { class, .. } if class.is(&StorageClass::PhysicalStorageBuffer) => Ok(8),
             Type::Bool
             | Type::Image { .. }
             | Type::Sampler
@@ -150,20 +144,16 @@ impl<'m> Sizes<'m> {
     pub(super) fn block(&mut self, id: u32) -> Result<BlockLayout, ReflectError> {
         let size = self.size(id)?;
         let module = self.module;
-        let runtime_array_stride = match *module.ty(id)? {
-            Type::Struct { ref members } => match members.last() {
-                Some(&last) => match *module.ty(last)? {
-                    Type::RuntimeArray { element } => {
-                        Some(match module.decorations(last).array_stride {
-                            Some(stride) => stride,
-                            None => self.size(element)?,
-                        })
-                    }
-                    _ => None,
-                },
-                None => None,
-            },
-            _ => None,
+        let runtime_array_stride = if let Type::Struct { ref members } = *module.ty(id)?
+            && let Some(&last) = members.last()
+            && let Type::RuntimeArray { element } = *module.ty(last)?
+        {
+            Some(match module.decorations(last).array_stride {
+                Some(stride) => stride,
+                None => self.size(element)?,
+            })
+        } else {
+            None
         };
         Ok(BlockLayout {
             size,
@@ -175,9 +165,9 @@ impl<'m> Sizes<'m> {
         let end = self.size(id)?;
         let module = self.module;
         let offset = match *module.ty(id)? {
-            Type::Struct { ref members } => (0..members.len())
-                .filter_map(|index| u32::try_from(index).ok())
-                .filter_map(|index| module.member_decorations(id, index).offset)
+            Type::Struct { ref members } => (0_u32..)
+                .zip(members)
+                .filter_map(|(index, _)| module.member_decorations(id, index).offset)
                 .min()
                 .unwrap_or(0),
             _ => 0,

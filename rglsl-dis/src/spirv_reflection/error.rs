@@ -4,7 +4,8 @@ use rglsl_types::ShaderStage;
 
 use super::DescriptorType;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReflectError {
     Header { words: usize },
     Magic(u32),
@@ -14,7 +15,6 @@ pub enum ReflectError {
     UnterminatedString { offset: usize, opcode: u32 },
     DuplicateId(u32),
     UndefinedType(u32),
-    UndefinedConstant(u32),
     NotAPointer { variable: u32 },
     CyclicType(u32),
     NoEntryPoint,
@@ -28,7 +28,10 @@ pub enum ReflectError {
     NonConstantWorkgroupSize(u32),
     InterfaceType(u32),
     SpecializationType(u32),
-    Overflow(u32),
+    ImageSampled { image: u32, sampled: u32 },
+    SizeOverflow(u32),
+    LocationOverflow(u32),
+    DescriptorCountOverflow { variable: u32 },
 }
 
 impl fmt::Display for ReflectError {
@@ -55,7 +58,6 @@ impl fmt::Display for ReflectError {
             ),
             Self::DuplicateId(id) => write!(f, "id {id} is defined more than once"),
             Self::UndefinedType(id) => write!(f, "id {id} is not a type"),
-            Self::UndefinedConstant(id) => write!(f, "id {id} is not a constant"),
             Self::NotAPointer { variable } => {
                 write!(f, "the type of variable {variable} is not a pointer")
             }
@@ -96,36 +98,60 @@ impl fmt::Display for ReflectError {
                     "specialization constant {id} does not have a scalar type"
                 )
             }
-            Self::Overflow(id) => write!(f, "the size of type {id} does not fit in 32 bits"),
+            Self::ImageSampled { image, sampled } => write!(
+                f,
+                "image type {image} has the invalid Sampled operand {sampled}"
+            ),
+            Self::SizeOverflow(id) => write!(f, "the size of type {id} does not fit in 32 bits"),
+            Self::LocationOverflow(id) => write!(
+                f,
+                "the number of locations of type {id} does not fit in 32 bits"
+            ),
+            Self::DescriptorCountOverflow { variable } => write!(
+                f,
+                "the descriptor count of variable {variable} does not fit in 32 bits"
+            ),
         }
     }
 }
 
 impl std::error::Error for ReflectError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BindingUse {
+    pub stage: ShaderStage,
+    pub descriptor_type: DescriptorType,
+    pub count: u32,
+}
+
+impl fmt::Display for BindingUse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} x{} in the {} stage",
+            self.descriptor_type.name(),
+            self.count,
+            self.stage.name()
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayoutError {
     pub set: u32,
     pub binding: u32,
-    pub first: (ShaderStage, DescriptorType, u32),
-    pub second: (ShaderStage, DescriptorType, u32),
+    pub first: BindingUse,
+    pub second: BindingUse,
 }
 
 impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (first_stage, first_type, first_count) = self.first;
-        let (second_stage, second_type, second_count) = self.second;
         write!(
             f,
-            "set {} binding {} is {} x{} in the {} stage but {} x{} in the {} stage",
-            self.set,
-            self.binding,
-            first_type.name(),
-            first_count,
-            first_stage.extension(),
-            second_type.name(),
-            second_count,
-            second_stage.extension()
+            "set {} binding {} is {} but {}",
+            self.set, self.binding, self.first, self.second
         )
     }
 }

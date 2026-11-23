@@ -7,9 +7,10 @@ use crate::api::{
     Limits, Location, Object, OptLevel, Program, ProgramOptions, ResultCode, Severity, Stage,
     TargetGpu,
 };
-use crate::reflection::{
-    self, Binding, DescriptorType, Interface, InterfaceFormat, InterfaceSlot, LocalSize,
-    PipelineLayout, Reflection, Scalar, ScalarKind, Specialization,
+use crate::spirv_reflection::{
+    self, BindingBlock, DescriptorType, Interface, InterfaceFormat, InterfaceSlot,
+    LayoutBindingSlot, LocalSize, PipelineLayout, PushConstant, PushConstantBank, RangeSlot,
+    ReflectionBinding, Scalar, ScalarKind, Specialization, SpirvReflection,
 };
 
 pub type IncludeCallback = Option<
@@ -877,73 +878,82 @@ pub unsafe extern "C" fn rglsl_diagnostics_info_log(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflect(
+pub unsafe extern "C" fn rglsl_spirv_reflect(
     words: *const u32,
     word_count: usize,
-    reflection: *mut *mut Reflection,
+    reflection: *mut *mut SpirvReflection,
     diagnostics: *mut *mut Diagnostics,
 ) -> ResultCode {
     let words = unsafe { word_slice(words, word_count) };
     let reflection = unsafe { reflection.as_mut() };
     let diagnostics = unsafe { diagnostics.as_mut() };
-    reflection::reflect(words, reflection, diagnostics)
+    spirv_reflection::reflect(words, reflection, diagnostics)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_destroy(reflection: *mut Reflection) {
+pub unsafe extern "C" fn rglsl_spirv_reflection_destroy(reflection: *mut SpirvReflection) {
     api::destroy(unsafe { take(reflection) });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_stage_reflection(
+pub unsafe extern "C" fn rglsl_program_spirv_reflection(
     program: *const Program,
     index: usize,
-) -> *const Reflection {
-    reflection::program_stage_reflection(unsafe { program.as_ref() }, index)
+    reflection: *mut *mut SpirvReflection,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let program = unsafe { program.as_ref() };
+    let reflection = unsafe { reflection.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    spirv_reflection::program_spirv_reflection(program, index, reflection, diagnostics)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_stage(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_stage(
+    reflection: *const SpirvReflection,
     stage: *mut Stage,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let stage = unsafe { stage.as_mut() };
-    reflection::reflection_stage(reflection_ref, stage)
+    spirv_reflection::reflection_stage(reflection, stage)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_entry_point(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_entry_point(
+    reflection: *const SpirvReflection,
 ) -> *const c_char {
-    reflection::reflection_entry_point(unsafe { reflection.as_ref() })
+    spirv_reflection::reflection_entry_point(unsafe { reflection.as_ref() })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_local_size(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_local_size(
+    reflection: *const SpirvReflection,
     dimension: u32,
+    present: *mut bool,
     size: *mut u32,
     specialized: *mut bool,
     spec_id: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let output = LocalSize {
+        present: unsafe { present.as_mut() },
         size: unsafe { size.as_mut() },
         specialized: unsafe { specialized.as_mut() },
-        id: unsafe { spec_id.as_mut() },
+        spec_id: unsafe { spec_id.as_mut() },
     };
-    reflection::reflection_local_size(reflection_ref, dimension, output)
+    spirv_reflection::reflection_local_size(reflection, dimension, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_binding_count(reflection: *const Reflection) -> usize {
-    reflection::reflection_binding_count(unsafe { reflection.as_ref() })
+pub unsafe extern "C" fn rglsl_spirv_reflection_binding_count(
+    reflection: *const SpirvReflection,
+) -> usize {
+    spirv_reflection::reflection_binding_count(unsafe { reflection.as_ref() })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_binding(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_binding(
+    reflection: *const SpirvReflection,
     index: usize,
     set: *mut u32,
     binding: *mut u32,
@@ -951,137 +961,151 @@ pub unsafe extern "C" fn rglsl_reflection_binding(
     count: *mut u32,
     variable_id: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
-    let output = Binding {
+    let reflection = unsafe { reflection.as_ref() };
+    let output = ReflectionBinding {
         set: unsafe { set.as_mut() },
         binding: unsafe { binding.as_mut() },
         descriptor_type: unsafe { descriptor_type.as_mut() },
         count: unsafe { count.as_mut() },
-        extra: unsafe { variable_id.as_mut() },
+        variable_id: unsafe { variable_id.as_mut() },
     };
-    reflection::reflection_binding(reflection_ref, index, output)
+    spirv_reflection::reflection_binding(reflection, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_binding_name(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_binding_name(
+    reflection: *const SpirvReflection,
     index: usize,
 ) -> *const c_char {
-    reflection::reflection_binding_name(unsafe { reflection.as_ref() }, index)
+    spirv_reflection::reflection_binding_name(unsafe { reflection.as_ref() }, index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_binding_block(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_binding_block(
+    reflection: *const SpirvReflection,
     index: usize,
+    is_block: *mut bool,
     size: *mut u32,
     runtime_array_stride: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
-    let size = unsafe { size.as_mut() };
-    let runtime_array_stride = unsafe { runtime_array_stride.as_mut() };
-    reflection::reflection_binding_block(reflection_ref, index, size, runtime_array_stride)
+    let reflection = unsafe { reflection.as_ref() };
+    let output = BindingBlock {
+        is_block: unsafe { is_block.as_mut() },
+        size: unsafe { size.as_mut() },
+        runtime_array_stride: unsafe { runtime_array_stride.as_mut() },
+    };
+    spirv_reflection::reflection_binding_block(reflection, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_descriptor_heaps(reflection: *const Reflection) -> u32 {
-    reflection::reflection_descriptor_heaps(unsafe { reflection.as_ref() })
+pub unsafe extern "C" fn rglsl_spirv_reflection_descriptor_heaps(
+    reflection: *const SpirvReflection,
+) -> u32 {
+    spirv_reflection::reflection_descriptor_heaps(unsafe { reflection.as_ref() })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_push_constant_count(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_push_constant_count(
+    reflection: *const SpirvReflection,
 ) -> usize {
-    reflection::reflection_push_constant_count(unsafe { reflection.as_ref() })
+    spirv_reflection::reflection_push_constant_count(unsafe { reflection.as_ref() })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_push_constant(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_push_constant(
+    reflection: *const SpirvReflection,
     index: usize,
     offset: *mut u32,
     size: *mut u32,
     variable_id: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
-    let offset = unsafe { offset.as_mut() };
-    let size = unsafe { size.as_mut() };
-    let variable_id = unsafe { variable_id.as_mut() };
-    reflection::reflection_push_constant(reflection_ref, index, offset, size, variable_id)
+    let reflection = unsafe { reflection.as_ref() };
+    let output = PushConstant {
+        offset: unsafe { offset.as_mut() },
+        size: unsafe { size.as_mut() },
+        variable_id: unsafe { variable_id.as_mut() },
+    };
+    spirv_reflection::reflection_push_constant(reflection, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_push_constant_name(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_push_constant_name(
+    reflection: *const SpirvReflection,
     index: usize,
 ) -> *const c_char {
-    reflection::reflection_push_constant_name(unsafe { reflection.as_ref() }, index)
+    spirv_reflection::reflection_push_constant_name(unsafe { reflection.as_ref() }, index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_push_constant_bank(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_push_constant_bank(
+    reflection: *const SpirvReflection,
     index: usize,
+    banked: *mut bool,
     bank: *mut u32,
     bank_offset: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
-    let bank = unsafe { bank.as_mut() };
-    let bank_offset = unsafe { bank_offset.as_mut() };
-    reflection::reflection_push_constant_bank(reflection_ref, index, bank, bank_offset)
+    let reflection = unsafe { reflection.as_ref() };
+    let output = PushConstantBank {
+        banked: unsafe { banked.as_mut() },
+        bank: unsafe { bank.as_mut() },
+        bank_offset: unsafe { bank_offset.as_mut() },
+    };
+    spirv_reflection::reflection_push_constant_bank(reflection, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_interface_count(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_interface_count(
+    reflection: *const SpirvReflection,
     direction: Interface,
 ) -> usize {
-    reflection::reflection_interface_count(unsafe { reflection.as_ref() }, direction)
+    spirv_reflection::reflection_interface_count(unsafe { reflection.as_ref() }, direction)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_interface(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_interface(
+    reflection: *const SpirvReflection,
     direction: Interface,
     index: usize,
     location: *mut u32,
     component: *mut u32,
     variable_id: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let output = InterfaceSlot {
         location: unsafe { location.as_mut() },
         component: unsafe { component.as_mut() },
         variable_id: unsafe { variable_id.as_mut() },
     };
-    reflection::reflection_interface(reflection_ref, direction, index, output)
+    spirv_reflection::reflection_interface(reflection, direction, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_interface_name(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_interface_name(
+    reflection: *const SpirvReflection,
     direction: Interface,
     index: usize,
 ) -> *const c_char {
-    reflection::reflection_interface_name(unsafe { reflection.as_ref() }, direction, index)
+    spirv_reflection::reflection_interface_name(unsafe { reflection.as_ref() }, direction, index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_interface_type(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_interface_type(
+    reflection: *const SpirvReflection,
     direction: Interface,
     index: usize,
     kind: *mut ScalarKind,
+    encoding: *mut u32,
     width: *mut u32,
     vector_size: *mut u32,
     columns: *mut u32,
     array: *mut *const u32,
     array_rank: *mut usize,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let output = InterfaceFormat {
         scalar: Scalar {
             kind: unsafe { kind.as_mut() },
+            encoding: unsafe { encoding.as_mut() },
             width: unsafe { width.as_mut() },
         },
         vector_size: unsafe { vector_size.as_mut() },
@@ -1089,60 +1113,74 @@ pub unsafe extern "C" fn rglsl_reflection_interface_type(
         array: unsafe { array.as_mut() },
         array_rank: unsafe { array_rank.as_mut() },
     };
-    reflection::reflection_interface_type(reflection_ref, direction, index, output)
+    spirv_reflection::reflection_interface_type(reflection, direction, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_specialization_count(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_specialization_count(
+    reflection: *const SpirvReflection,
 ) -> usize {
-    reflection::reflection_specialization_count(unsafe { reflection.as_ref() })
+    spirv_reflection::reflection_specialization_count(unsafe { reflection.as_ref() })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_specialization(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_specialization(
+    reflection: *const SpirvReflection,
     index: usize,
     spec_id: *mut u32,
     kind: *mut ScalarKind,
+    encoding: *mut u32,
     width: *mut u32,
     default_bits: *mut u64,
     result_id: *mut u32,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let output = Specialization {
         spec_id: unsafe { spec_id.as_mut() },
         scalar: Scalar {
             kind: unsafe { kind.as_mut() },
+            encoding: unsafe { encoding.as_mut() },
             width: unsafe { width.as_mut() },
         },
         default_bits: unsafe { default_bits.as_mut() },
         result_id: unsafe { result_id.as_mut() },
     };
-    reflection::reflection_specialization(reflection_ref, index, output)
+    spirv_reflection::reflection_specialization(reflection, index, output)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_specialization_name(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_specialization_name(
+    reflection: *const SpirvReflection,
     index: usize,
 ) -> *const c_char {
-    reflection::reflection_specialization_name(unsafe { reflection.as_ref() }, index)
+    spirv_reflection::reflection_specialization_name(unsafe { reflection.as_ref() }, index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_reflection_json(
-    reflection: *const Reflection,
+pub unsafe extern "C" fn rglsl_spirv_reflection_json(
+    reflection: *const SpirvReflection,
     json: *mut *mut Blob,
 ) -> ResultCode {
-    let reflection_ref = unsafe { reflection.as_ref() };
+    let reflection = unsafe { reflection.as_ref() };
     let json = unsafe { json.as_mut() };
-    reflection::reflection_json(reflection_ref, json)
+    spirv_reflection::reflection_json(reflection, json)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_spirv_reflection_json(
+    program: *const Program,
+    json: *mut *mut Blob,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let program = unsafe { program.as_ref() };
+    let json = unsafe { json.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    spirv_reflection::program_spirv_reflection_json(program, json, diagnostics)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_pipeline_layout_create(
-    reflections: *const *const Reflection,
+    reflections: *const *const SpirvReflection,
     count: usize,
     layout: *mut *mut PipelineLayout,
     diagnostics: *mut *mut Diagnostics,
@@ -1150,7 +1188,7 @@ pub unsafe extern "C" fn rglsl_pipeline_layout_create(
     let reflections = unsafe { handles(reflections, count) };
     let layout = unsafe { layout.as_mut() };
     let diagnostics = unsafe { diagnostics.as_mut() };
-    reflection::pipeline_layout_create(reflections, layout, diagnostics)
+    spirv_reflection::pipeline_layout_create(reflections, layout, diagnostics)
 }
 
 #[unsafe(no_mangle)]
@@ -1162,19 +1200,7 @@ pub unsafe extern "C" fn rglsl_program_pipeline_layout(
     let program = unsafe { program.as_ref() };
     let layout = unsafe { layout.as_mut() };
     let diagnostics = unsafe { diagnostics.as_mut() };
-    reflection::program_pipeline_layout(program, layout, diagnostics)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rglsl_program_reflection_json(
-    program: *const Program,
-    json: *mut *mut Blob,
-    diagnostics: *mut *mut Diagnostics,
-) -> ResultCode {
-    let program = unsafe { program.as_ref() };
-    let json = unsafe { json.as_mut() };
-    let diagnostics = unsafe { diagnostics.as_mut() };
-    reflection::program_reflection_json(program, json, diagnostics)
+    spirv_reflection::program_pipeline_layout(program, layout, diagnostics)
 }
 
 #[unsafe(no_mangle)]
@@ -1186,7 +1212,7 @@ pub unsafe extern "C" fn rglsl_pipeline_layout_destroy(layout: *mut PipelineLayo
 pub unsafe extern "C" fn rglsl_pipeline_layout_binding_count(
     layout: *const PipelineLayout,
 ) -> usize {
-    reflection::pipeline_layout_binding_count(unsafe { layout.as_ref() })
+    spirv_reflection::pipeline_layout_binding_count(unsafe { layout.as_ref() })
 }
 
 #[unsafe(no_mangle)]
@@ -1200,14 +1226,14 @@ pub unsafe extern "C" fn rglsl_pipeline_layout_binding(
     stage_flags: *mut u32,
 ) -> ResultCode {
     let layout = unsafe { layout.as_ref() };
-    let output = Binding {
+    let output = LayoutBindingSlot {
         set: unsafe { set.as_mut() },
         binding: unsafe { binding.as_mut() },
         descriptor_type: unsafe { descriptor_type.as_mut() },
         count: unsafe { count.as_mut() },
-        extra: unsafe { stage_flags.as_mut() },
+        stage_flags: unsafe { stage_flags.as_mut() },
     };
-    reflection::pipeline_layout_binding(layout, index, output)
+    spirv_reflection::pipeline_layout_binding(layout, index, output)
 }
 
 #[unsafe(no_mangle)]
@@ -1215,14 +1241,14 @@ pub unsafe extern "C" fn rglsl_pipeline_layout_binding_name(
     layout: *const PipelineLayout,
     index: usize,
 ) -> *const c_char {
-    reflection::pipeline_layout_binding_name(unsafe { layout.as_ref() }, index)
+    spirv_reflection::pipeline_layout_binding_name(unsafe { layout.as_ref() }, index)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range_count(
     layout: *const PipelineLayout,
 ) -> usize {
-    reflection::pipeline_layout_push_constant_range_count(unsafe { layout.as_ref() })
+    spirv_reflection::pipeline_layout_push_constant_range_count(unsafe { layout.as_ref() })
 }
 
 #[unsafe(no_mangle)]
@@ -1234,19 +1260,23 @@ pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range(
     size: *mut u32,
 ) -> ResultCode {
     let layout = unsafe { layout.as_ref() };
-    let stage_flags = unsafe { stage_flags.as_mut() };
-    let offset = unsafe { offset.as_mut() };
-    let size = unsafe { size.as_mut() };
-    reflection::pipeline_layout_push_constant_range(layout, index, stage_flags, offset, size)
+    let output = RangeSlot {
+        stage_flags: unsafe { stage_flags.as_mut() },
+        offset: unsafe { offset.as_mut() },
+        size: unsafe { size.as_mut() },
+    };
+    spirv_reflection::pipeline_layout_push_constant_range(layout, index, output)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_pipeline_layout_push_constant_range_bank(
     layout: *const PipelineLayout,
     index: usize,
+    banked: *mut bool,
     bank: *mut u32,
 ) -> ResultCode {
     let layout = unsafe { layout.as_ref() };
+    let banked = unsafe { banked.as_mut() };
     let bank = unsafe { bank.as_mut() };
-    reflection::pipeline_layout_push_constant_range_bank(layout, index, bank)
+    spirv_reflection::pipeline_layout_push_constant_range_bank(layout, index, banked, bank)
 }

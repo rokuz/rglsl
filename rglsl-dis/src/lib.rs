@@ -2,7 +2,7 @@
 
 mod glslang;
 mod hex;
-pub mod reflection;
+pub mod spirv_reflection;
 mod standard;
 mod string;
 

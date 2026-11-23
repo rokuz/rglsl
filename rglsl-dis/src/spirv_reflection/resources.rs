@@ -1,7 +1,7 @@
 use spirv::{BuiltIn, Dim, StorageClass};
 
 use super::layout::{Sizes, element_chain};
-use super::module::{Module, Type, Variable};
+use super::module::{DecorationFlags, Enumerant, ImageUsage, Module, Type, Variable};
 use super::{DescriptorBinding, DescriptorHeap, DescriptorType, PushConstantBlock, ReflectError};
 
 #[derive(Debug, Default)]
@@ -17,17 +17,17 @@ pub(super) fn collect(module: &Module, sizes: &mut Sizes<'_>) -> Result<Resource
         let decorations = module.decorations(variable.id);
         let pointee = module.pointee(variable)?;
         match decorations.built_in {
-            Some(built_in) if built_in == BuiltIn::ResourceHeapEXT as u32 => {
+            Some(Enumerant::Known(BuiltIn::ResourceHeapEXT)) => {
                 resources.heaps.push(DescriptorHeap::Resource);
                 continue;
             }
-            Some(built_in) if built_in == BuiltIn::SamplerHeapEXT as u32 => {
+            Some(Enumerant::Known(BuiltIn::SamplerHeapEXT)) => {
                 resources.heaps.push(DescriptorHeap::Sampler);
                 continue;
             }
             _ => {}
         }
-        if variable.class == StorageClass::PushConstant as u32 {
+        if variable.class.is(&StorageClass::PushConstant) {
             let ty = pointee.ok_or(ReflectError::UnknownResource {
                 variable: variable.id,
             })?;
@@ -74,17 +74,20 @@ fn descriptor(
     let unknown = ReflectError::UnknownResource {
         variable: variable.id,
     };
-    let ty = pointee.ok_or_else(|| unknown.clone())?;
+    let ty = pointee.ok_or(unknown)?;
     let (element, lengths) = element_chain(module, ty)?;
-    let mut count = 1_u32;
-    for length in lengths {
-        count = match length {
-            Some(length) => count
-                .checked_mul(length)
-                .ok_or(ReflectError::Overflow(ty))?,
-            None => 0,
-        };
-    }
+    let count = lengths
+        .into_iter()
+        .try_fold(1_u32, |count, length| match length {
+            Some(length) => {
+                count
+                    .checked_mul(length)
+                    .ok_or(ReflectError::DescriptorCountOverflow {
+                        variable: variable.id,
+                    })
+            }
+            None => Ok(0),
+        })?;
     let descriptor_type = descriptor_type(module, variable.class, element)?.ok_or(unknown)?;
     let block = match descriptor_type {
         DescriptorType::UniformBuffer | DescriptorType::StorageBuffer => {
@@ -105,58 +108,58 @@ fn descriptor(
 
 fn descriptor_type(
     module: &Module,
-    class: u32,
+    class: Enumerant<StorageClass>,
     element: u32,
 ) -> Result<Option<DescriptorType>, ReflectError> {
-    let class = StorageClass::from_u32(class);
-    let ty = module.ty(element)?;
-    Ok(match (class, ty) {
-        (Some(StorageClass::Uniform), &Type::Struct { .. }) => {
-            let decorations = module.decorations(element);
-            if decorations.buffer_block {
+    let Enumerant::Known(class) = class else {
+        return Ok(None);
+    };
+    Ok(match (class, module.ty(element)?) {
+        (StorageClass::Uniform, &Type::Struct { .. }) => {
+            let flags = module.decorations(element).flags;
+            if flags.contains(DecorationFlags::BUFFER_BLOCK) {
                 Some(DescriptorType::StorageBuffer)
-            } else if decorations.block {
+            } else if flags.contains(DecorationFlags::BLOCK) {
                 Some(DescriptorType::UniformBuffer)
             } else {
                 None
             }
         }
-        (Some(StorageClass::StorageBuffer), &Type::Struct { .. }) => {
-            Some(DescriptorType::StorageBuffer)
-        }
+        (StorageClass::StorageBuffer, &Type::Struct { .. }) => Some(DescriptorType::StorageBuffer),
         (
-            Some(StorageClass::UniformConstant | StorageClass::TileAttachmentQCOM),
+            StorageClass::UniformConstant | StorageClass::TileAttachmentQCOM,
             &Type::SampledImage { image },
         ) => match *module.ty(image)? {
-            Type::Image { dim, .. } if dim == Dim::DimBuffer as u32 => {
+            Type::Image { dim, .. } if dim.is(&Dim::DimBuffer) => {
                 Some(DescriptorType::UniformTexelBuffer)
             }
             Type::Image { .. } => Some(DescriptorType::CombinedImageSampler),
             _ => None,
         },
         (
-            Some(StorageClass::UniformConstant | StorageClass::TileAttachmentQCOM),
-            &Type::Image { dim, sampled },
-        ) => image_type(dim, sampled),
-        (Some(StorageClass::UniformConstant), &Type::Sampler) => Some(DescriptorType::Sampler),
-        (Some(StorageClass::UniformConstant), &Type::AccelerationStructure) => {
+            StorageClass::UniformConstant | StorageClass::TileAttachmentQCOM,
+            &Type::Image { dim, usage },
+        ) => image_type(dim, usage),
+        (StorageClass::UniformConstant, &Type::Sampler) => Some(DescriptorType::Sampler),
+        (StorageClass::UniformConstant, &Type::AccelerationStructure) => {
             Some(DescriptorType::AccelerationStructure)
         }
-        (Some(StorageClass::UniformConstant), &Type::Tensor) => Some(DescriptorType::Tensor),
+        (StorageClass::UniformConstant, &Type::Tensor) => Some(DescriptorType::Tensor),
         _ => None,
     })
 }
 
-fn image_type(dim: u32, sampled: u32) -> Option<DescriptorType> {
-    let buffer = dim == Dim::DimBuffer as u32;
-    if dim == Dim::DimSubpassData as u32 {
-        return Some(DescriptorType::InputAttachment);
-    }
-    match (buffer, sampled) {
-        (true, 1) => Some(DescriptorType::UniformTexelBuffer),
-        (true, 2) => Some(DescriptorType::StorageTexelBuffer),
-        (false, 1) => Some(DescriptorType::SampledImage),
-        (false, 2) => Some(DescriptorType::StorageImage),
-        _ => None,
+fn image_type(dim: Enumerant<Dim>, usage: ImageUsage) -> Option<DescriptorType> {
+    match (dim, usage) {
+        (Enumerant::Known(Dim::DimSubpassData), _) => Some(DescriptorType::InputAttachment),
+        (_, ImageUsage::Runtime) | (Enumerant::Unknown(_), _) => None,
+        (Enumerant::Known(Dim::DimBuffer), ImageUsage::Sampled) => {
+            Some(DescriptorType::UniformTexelBuffer)
+        }
+        (Enumerant::Known(Dim::DimBuffer), ImageUsage::Storage) => {
+            Some(DescriptorType::StorageTexelBuffer)
+        }
+        (Enumerant::Known(_), ImageUsage::Sampled) => Some(DescriptorType::SampledImage),
+        (Enumerant::Known(_), ImageUsage::Storage) => Some(DescriptorType::StorageImage),
     }
 }

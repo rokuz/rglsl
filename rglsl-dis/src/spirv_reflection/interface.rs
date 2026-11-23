@@ -5,7 +5,7 @@ use rglsl_types::stack::recurse;
 use spirv::StorageClass;
 
 use super::layout::element_chain;
-use super::module::{EntryPoint, Module, Type, Variable};
+use super::module::{DecorationFlags, EntryPoint, Module, Type, Variable};
 use super::{Format, InterfaceVariable, ReflectError};
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl<'m> Locations<'m> {
 
     fn compute(&mut self, id: u32) -> Result<u32, ReflectError> {
         let module = self.module;
-        let overflow = || ReflectError::Overflow(id);
+        let overflow = ReflectError::LocationOverflow(id);
         match *module.ty(id)? {
             Type::Bool | Type::Int { .. } | Type::Float { .. } => Ok(1),
             Type::Vector { component, count } => {
@@ -58,20 +58,17 @@ impl<'m> Locations<'m> {
                     .is_some_and(|scalar| scalar.width > 32);
                 Ok(if wide && count > 2 { 2 } else { 1 })
             }
-            Type::Matrix { column, columns } => self
-                .count(column)?
-                .checked_mul(columns)
-                .ok_or_else(overflow),
+            Type::Matrix { column, columns } => {
+                self.count(column)?.checked_mul(columns).ok_or(overflow)
+            }
             Type::Array { element, length } => self
                 .count(element)?
                 .checked_mul(module.array_length(id, length)?)
-                .ok_or_else(overflow),
+                .ok_or(overflow),
             Type::Struct { ref members } => {
                 let mut total = 0_u32;
                 for &member in members {
-                    total = total
-                        .checked_add(self.count(member)?)
-                        .ok_or_else(overflow)?;
+                    total = total.checked_add(self.count(member)?).ok_or(overflow)?;
                 }
                 Ok(total)
             }
@@ -99,8 +96,8 @@ pub(super) fn collect(
     let mut outputs = Vec::new();
     let mut locations = Locations::new(module);
     for variable in &module.variables {
-        let input = variable.class == StorageClass::Input as u32;
-        if !input && variable.class != StorageClass::Output as u32 {
+        let input = variable.class.is(&StorageClass::Input);
+        if !input && !variable.class.is(&StorageClass::Output) {
             continue;
         }
         let list = if input { &mut inputs } else { &mut outputs };
@@ -113,14 +110,21 @@ pub(super) fn collect(
 }
 
 fn patch(module: &Module, variable: u32, ty: u32) -> Result<bool, ReflectError> {
-    if module.decorations(variable).patch {
+    if module
+        .decorations(variable)
+        .flags
+        .contains(DecorationFlags::PATCH)
+    {
         return Ok(true);
     }
     let (element, _) = element_chain(module, ty)?;
     Ok(match *module.ty(element)? {
-        Type::Struct { ref members } => (0..members.len())
-            .filter_map(|index| u32::try_from(index).ok())
-            .any(|index| module.member_decorations(element, index).patch),
+        Type::Struct { ref members } => (0_u32..).zip(members).any(|(index, _)| {
+            module
+                .member_decorations(element, index)
+                .flags
+                .contains(DecorationFlags::PATCH)
+        }),
         _ => false,
     })
 }
@@ -152,7 +156,7 @@ fn flatten(
         entry.stage,
         input,
         patch(module, variable.id, ty)?,
-        decorations.per_vertex,
+        decorations.flags.contains(DecorationFlags::PER_VERTEX),
     );
     let (ty, array) = match *module.ty(ty)? {
         Type::Array { element, length } if per_vertex => {
@@ -187,8 +191,7 @@ fn flatten(
         };
         let mut running = item.location;
         let mut expanded = Vec::with_capacity(members.len());
-        for (index, &member) in members.iter().enumerate() {
-            let index = u32::try_from(index).map_err(|_| ReflectError::Overflow(element))?;
+        for (index, &member) in (0_u32..).zip(members) {
             let member_decorations = module.member_decorations(element, index);
             if member_decorations.built_in.is_some() {
                 continue;
@@ -199,7 +202,7 @@ fn flatten(
                 .map(|location| {
                     location
                         .checked_add(consumed)
-                        .ok_or(ReflectError::Overflow(element))
+                        .ok_or(ReflectError::LocationOverflow(element))
                 })
                 .transpose()?;
             expanded.push(Pending {

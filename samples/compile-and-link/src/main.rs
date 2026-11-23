@@ -2,6 +2,7 @@ use std::error::Error;
 use std::path::Path;
 use std::process::ExitCode;
 
+use rglsl_link::spirv_reflection::{PipelineLayout, Reflection};
 use rglsl_link::{
     CompileOptions, Diagnostics, ObjectModule, OptLevel, OptOptions, Program, ProgramOptions,
     ShaderStage, compile, compile_and_link, link_spirv,
@@ -72,7 +73,19 @@ fn describe(program: &Program) {
             binary.words.len(),
             binary.bytes().len()
         );
-        let reflection = &binary.reflection;
+    }
+    match program.spirv_reflections() {
+        Ok(reflections) => describe_reflections(&reflections),
+        Err(error) => println!("  no SPIR-V reflection: {error}"),
+    }
+    for warning in program.warnings.iter() {
+        println!("  {warning}");
+    }
+}
+
+fn describe_reflections(reflections: &[Reflection]) {
+    for reflection in reflections {
+        println!("  {} stage reflection:", reflection.stage.name());
         for binding in &reflection.descriptor_bindings {
             println!(
                 "    set {} binding {}: {} x{} `{}`",
@@ -93,16 +106,13 @@ fn describe(program: &Program) {
             }
         }
     }
-    match program.pipeline_layout() {
+    match PipelineLayout::new(reflections) {
         Ok(layout) => println!(
             "  pipeline layout: {} descriptor sets, {} push constant ranges",
             layout.sets.len(),
             layout.push_constant_ranges.len()
         ),
         Err(error) => println!("  no pipeline layout: {error}"),
-    }
-    for warning in program.warnings.iter() {
-        println!("  {warning}");
     }
 }
 

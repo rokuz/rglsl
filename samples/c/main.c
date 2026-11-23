@@ -132,42 +132,54 @@ static const char *stage_extension(rglsl_stage stage)
     }
 }
 
-static void print_interface(const rglsl_reflection *reflection, rglsl_interface direction,
-                            const char *what)
+static void print_interface(const rglsl_spirv_reflection *reflection,
+                            rglsl_interface direction, const char *what)
 {
-    size_t count = rglsl_reflection_interface_count(reflection, direction);
+    size_t count = rglsl_spirv_reflection_interface_count(reflection, direction);
     for (size_t index = 0; index < count; ++index) {
         uint32_t location = 0;
         uint32_t component = 0;
+        uint32_t variable_id = 0;
+        uint32_t encoding = 0;
         uint32_t width = 0;
         uint32_t vector_size = 0;
         uint32_t columns = 0;
+        const uint32_t *array = NULL;
+        size_t array_rank = 0;
         rglsl_scalar_kind kind = RGLSL_SCALAR_KIND_FLOAT;
-        if (rglsl_reflection_interface(reflection, direction, index, &location, &component,
-                                       NULL) != RGLSL_RESULT_OK ||
-            rglsl_reflection_interface_type(reflection, direction, index, &kind, &width,
-                                            &vector_size, &columns, NULL,
-                                            NULL) != RGLSL_RESULT_OK) {
+        if (rglsl_spirv_reflection_interface(reflection, direction, index, &location,
+                                             &component, &variable_id) != RGLSL_RESULT_OK ||
+            rglsl_spirv_reflection_interface_type(reflection, direction, index, &kind,
+                                                  &encoding, &width, &vector_size, &columns,
+                                                  &array, &array_rank) != RGLSL_RESULT_OK) {
             continue;
         }
-        const char *name = rglsl_reflection_interface_name(reflection, direction, index);
+        const char *name = rglsl_spirv_reflection_interface_name(reflection, direction, index);
         printf("  %s %s: location %u, component %u, %u x %u of %u-bit kind %u\n", what,
                name ? name : "(unnamed)", (unsigned)location, (unsigned)component,
                (unsigned)columns, (unsigned)vector_size, (unsigned)width, (unsigned)kind);
     }
 }
 
-static void print_reflection(const rglsl_reflection *reflection)
+static int print_reflection(const rglsl_program *program, size_t stage)
 {
-    size_t bindings = rglsl_reflection_binding_count(reflection);
+    rglsl_spirv_reflection *reflection = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_result code = rglsl_program_spirv_reflection(program, stage, &reflection, &diagnostics);
+    if (code != RGLSL_RESULT_OK) {
+        report("reflecting the SPIR-V", code, diagnostics);
+        return 1;
+    }
+    size_t bindings = rglsl_spirv_reflection_binding_count(reflection);
     for (size_t index = 0; index < bindings; ++index) {
         uint32_t set = 0;
         uint32_t binding = 0;
         uint32_t count = 0;
+        uint32_t variable_id = 0;
         rglsl_descriptor_type type = RGLSL_DESCRIPTOR_TYPE_SAMPLER;
-        if (rglsl_reflection_binding(reflection, index, &set, &binding, &type, &count, NULL) ==
-            RGLSL_RESULT_OK) {
-            const char *name = rglsl_reflection_binding_name(reflection, index);
+        if (rglsl_spirv_reflection_binding(reflection, index, &set, &binding, &type, &count,
+                                           &variable_id) == RGLSL_RESULT_OK) {
+            const char *name = rglsl_spirv_reflection_binding_name(reflection, index);
             printf("  binding %s: set %u, binding %u, VkDescriptorType %u, count %u\n",
                    name ? name : "(unnamed)", (unsigned)set, (unsigned)binding,
                    (unsigned)type, (unsigned)count);
@@ -175,6 +187,8 @@ static void print_reflection(const rglsl_reflection *reflection)
     }
     print_interface(reflection, RGLSL_INTERFACE_INPUT, "input");
     print_interface(reflection, RGLSL_INTERFACE_OUTPUT, "output");
+    rglsl_spirv_reflection_destroy(reflection);
+    return 0;
 }
 
 static int write_stages(const rglsl_program *program, const char *directory)
@@ -203,7 +217,9 @@ static int write_stages(const rglsl_program *program, const char *directory)
         }
         printf("%s stage: entry point %s, %zu words -> %s\n", stage_extension(stage),
                rglsl_program_entry_point(program, index), word_count, path);
-        print_reflection(rglsl_program_stage_reflection(program, index));
+        if (print_reflection(program, index) != 0) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -222,7 +238,7 @@ static int print_pipeline_layout(const rglsl_program *program)
            rglsl_pipeline_layout_push_constant_range_count(layout));
     rglsl_pipeline_layout_destroy(layout);
     rglsl_blob *json = NULL;
-    code = rglsl_program_reflection_json(program, &json, &diagnostics);
+    code = rglsl_program_spirv_reflection_json(program, &json, &diagnostics);
     if (code != RGLSL_RESULT_OK) {
         report("writing the reflection", code, diagnostics);
         return 1;

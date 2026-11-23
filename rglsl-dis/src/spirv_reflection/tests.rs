@@ -1,6 +1,11 @@
 use spirv::{Decoration, Dim, ExecutionMode, ExecutionModel, Op, StorageClass};
 
-use super::{DescriptorType, ReflectError, WorkgroupDimension, reflect};
+use rglsl_types::ShaderStage;
+
+use super::{
+    DescriptorType, ReflectError, Reflection, ScalarKind, ScalarType, ScalarValue,
+    SpecializationConstant, WorkgroupDimension, reflect,
+};
 
 const MAGIC: u32 = 0x0723_0203;
 
@@ -313,4 +318,66 @@ fn deep_nesting_does_not_overflow_the_stack() -> Result<(), ReflectError> {
     };
     assert_eq!(block.size, 4);
     Ok(())
+}
+
+#[test]
+fn json_floats_round_trip_in_the_shortest_form() {
+    let constant = |spec_id, width, bits| SpecializationConstant {
+        spec_id,
+        name: None,
+        result_id: spec_id,
+        scalar: ScalarType {
+            kind: ScalarKind::Float,
+            width,
+        },
+        default: ScalarValue::FloatBits(bits),
+    };
+    let reflection = Reflection {
+        stage: ShaderStage::Compute,
+        entry_point: String::from("main"),
+        local_size: None,
+        descriptor_bindings: Vec::new(),
+        descriptor_heaps: Vec::new(),
+        push_constants: Vec::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        specialization_constants: vec![
+            constant(0, 64, 1e300_f64.to_bits()),
+            constant(1, 32, u64::from(0.1_f32.to_bits())),
+            constant(2, 16, 0x3c00),
+            constant(3, 64, f64::NAN.to_bits()),
+            constant(4, 32, u64::from(f32::NEG_INFINITY.to_bits())),
+            constant(5, 64, 1e-7_f64.to_bits()),
+        ],
+    };
+    let json = reflection.to_json();
+    for expected in [
+        "\"default\": 1e300\n",
+        "\"default\": 0.1\n",
+        "\"default\": 1.0\n",
+        "\"default\": \"NaN\"\n",
+        "\"default\": \"-Infinity\"\n",
+        "\"default\": 1e-7\n",
+        "\"stage\": \"comp\"",
+    ] {
+        assert!(json.contains(expected), "{expected}\n{json}");
+    }
+}
+
+#[test]
+fn invalid_image_operands() {
+    let mut words = compute();
+    instruction(&mut words, Op::TypeFloat, &[10, 32]);
+    instruction(
+        &mut words,
+        Op::TypeImage,
+        &[11, 10, Dim::Dim2D as u32, 0, 0, 0, 3, 0],
+    );
+    assert_eq!(
+        reflect(&words),
+        Err(ReflectError::ImageSampled {
+            image: 11,
+            sampled: 3
+        })
+    );
 }

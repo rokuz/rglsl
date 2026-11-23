@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rglsl_types::ShaderStage;
-use spirv::{BuiltIn, Decoration, ExecutionMode, ExecutionModel, Op, StorageClass};
+use spirv::{BuiltIn, Decoration, Dim, ExecutionMode, ExecutionModel, Op, StorageClass};
 
 use super::{
     ReflectError, ScalarKind, ScalarType, ScalarValue, SpecializationConstant, WorkgroupDimension,
@@ -11,43 +11,103 @@ use crate::string::decode_string;
 const MAGIC: u32 = 0x0723_0203;
 const HEADER_WORDS: usize = 5;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Enumerant<T> {
+    Known(T),
+    Unknown(u32),
+}
+
+impl<T> Enumerant<T> {
+    fn parse(value: u32, from: impl FnOnce(u32) -> Option<T>) -> Self {
+        from(value).map_or(Self::Unknown(value), Self::Known)
+    }
+}
+
+impl<T: PartialEq> Enumerant<T> {
+    pub(super) fn is(&self, known: &T) -> bool {
+        matches!(*self, Self::Known(ref value) if value == known)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImageUsage {
+    Runtime,
+    Sampled,
+    Storage,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Type {
     Bool,
-    Int { width: u32, signed: bool },
-    Float { width: u32, encoding: Option<u32> },
-    Vector { component: u32, count: u32 },
-    Matrix { column: u32, columns: u32 },
-    Image { dim: u32, sampled: u32 },
+    Int {
+        width: u32,
+        signed: bool,
+    },
+    Float {
+        width: u32,
+        encoding: Option<u32>,
+    },
+    Vector {
+        component: u32,
+        count: u32,
+    },
+    Matrix {
+        column: u32,
+        columns: u32,
+    },
+    Image {
+        dim: Enumerant<Dim>,
+        usage: ImageUsage,
+    },
     Sampler,
-    SampledImage { image: u32 },
-    Array { element: u32, length: u32 },
-    RuntimeArray { element: u32 },
-    Struct { members: Vec<u32> },
-    Pointer { class: u32, pointee: Option<u32> },
+    SampledImage {
+        image: u32,
+    },
+    Array {
+        element: u32,
+        length: u32,
+    },
+    RuntimeArray {
+        element: u32,
+    },
+    Struct {
+        members: Vec<u32>,
+    },
+    Pointer {
+        class: Enumerant<StorageClass>,
+        pointee: Option<u32>,
+    },
     AccelerationStructure,
     Tensor,
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Scalar {
+    Bool(bool),
+    Number { ty: u32, bits: u64 },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Constant {
-    Scalar {
-        ty: u32,
-        words: Vec<u32>,
-        spec: bool,
-    },
-    Bool {
-        value: bool,
-        spec: bool,
-    },
-    Composite {
-        constituents: Vec<u32>,
-    },
+    Fixed(Scalar),
+    Specialization(Scalar),
+    Composite { constituents: Vec<u32> },
     Other,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(super) struct DecorationFlags: u8 {
+        const BLOCK = 1 << 0;
+        const BUFFER_BLOCK = 1 << 1;
+        const ROW_MAJOR = 1 << 2;
+        const PATCH = 1 << 3;
+        const PER_VERTEX = 1 << 4;
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Decorations {
     pub(super) set: Option<u32>,
     pub(super) binding: Option<u32>,
@@ -59,12 +119,8 @@ pub(super) struct Decorations {
     pub(super) offset: Option<u32>,
     pub(super) bank: Option<u32>,
     pub(super) bank_offset: Option<u32>,
-    pub(super) built_in: Option<u32>,
-    pub(super) block: bool,
-    pub(super) buffer_block: bool,
-    pub(super) row_major: bool,
-    pub(super) patch: bool,
-    pub(super) per_vertex: bool,
+    pub(super) built_in: Option<Enumerant<BuiltIn>>,
+    pub(super) flags: DecorationFlags,
 }
 
 impl Decorations {
@@ -87,20 +143,22 @@ impl Decorations {
             Decoration::Offset => self.offset = Some(operand(0)?),
             Decoration::BankNV => self.bank = Some(operand(0)?),
             Decoration::MemberOffsetNV => self.bank_offset = Some(operand(0)?),
-            Decoration::BuiltIn => self.built_in = Some(operand(0)?),
-            Decoration::Block => self.block = true,
-            Decoration::BufferBlock => self.buffer_block = true,
-            Decoration::RowMajor => self.row_major = true,
-            Decoration::ColMajor => self.row_major = false,
-            Decoration::Patch => self.patch = true,
-            Decoration::PerVertexKHR => self.per_vertex = true,
+            Decoration::BuiltIn => {
+                self.built_in = Some(Enumerant::parse(operand(0)?, BuiltIn::from_u32));
+            }
+            Decoration::Block => self.flags |= DecorationFlags::BLOCK,
+            Decoration::BufferBlock => self.flags |= DecorationFlags::BUFFER_BLOCK,
+            Decoration::RowMajor => self.flags |= DecorationFlags::ROW_MAJOR,
+            Decoration::ColMajor => self.flags -= DecorationFlags::ROW_MAJOR,
+            Decoration::Patch => self.flags |= DecorationFlags::PATCH,
+            Decoration::PerVertexKHR => self.flags |= DecorationFlags::PER_VERTEX,
             _ => {}
         }
         Ok(())
     }
 
     fn merge(&mut self, group: &Self) {
-        let options = [
+        for (own, from_group) in [
             (&mut self.set, group.set),
             (&mut self.binding, group.binding),
             (&mut self.location, group.location),
@@ -111,25 +169,18 @@ impl Decorations {
             (&mut self.offset, group.offset),
             (&mut self.bank, group.bank),
             (&mut self.bank_offset, group.bank_offset),
-            (&mut self.built_in, group.built_in),
-        ];
-        for (own, from_group) in options {
-            if from_group.is_some() {
-                *own = from_group;
-            }
+        ] {
+            *own = from_group.or(*own);
         }
-        self.block |= group.block;
-        self.buffer_block |= group.buffer_block;
-        self.row_major |= group.row_major;
-        self.patch |= group.patch;
-        self.per_vertex |= group.per_vertex;
+        self.built_in = group.built_in.or(self.built_in);
+        self.flags |= group.flags;
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Variable {
     pub(super) id: u32,
-    pub(super) class: u32,
+    pub(super) class: Enumerant<StorageClass>,
     pointer: u32,
     data_type: Option<u32>,
 }
@@ -144,7 +195,7 @@ pub(super) struct EntryPoint {
 #[derive(Debug, Default)]
 pub(super) struct Module {
     pub(super) types: BTreeMap<u32, Type>,
-    pub(super) constants: BTreeMap<u32, Constant>,
+    constants: BTreeMap<u32, Constant>,
     decorations: BTreeMap<u32, Decorations>,
     member_decorations: BTreeMap<(u32, u32), Decorations>,
     names: BTreeMap<u32, String>,
@@ -165,15 +216,19 @@ struct Instruction<'w> {
 }
 
 impl<'w> Instruction<'w> {
+    const fn missing_operand(self) -> ReflectError {
+        ReflectError::MissingOperand {
+            offset: self.offset,
+            opcode: self.opcode,
+        }
+    }
+
     fn operand(self, index: usize) -> Result<u32, ReflectError> {
         index
             .checked_add(1)
             .and_then(|index| self.words.get(index))
             .copied()
-            .ok_or(ReflectError::MissingOperand {
-                offset: self.offset,
-                opcode: self.opcode,
-            })
+            .ok_or(self.missing_operand())
     }
 
     fn operands_from(self, index: usize) -> &'w [u32] {
@@ -183,17 +238,23 @@ impl<'w> Instruction<'w> {
             .unwrap_or_default()
     }
 
-    fn string(self, index: usize) -> Result<(String, usize), ReflectError> {
+    fn string(self, index: usize) -> Result<String, ReflectError> {
         let words = self.operands_from(index);
         let bytes = decode_string(words);
-        let used = bytes.len() / 4 + 1;
-        if used > words.len() {
+        if bytes.len() / 4 >= words.len() {
             return Err(ReflectError::UnterminatedString {
                 offset: self.offset,
                 opcode: self.opcode,
             });
         }
-        Ok((String::from_utf8_lossy(&bytes).into_owned(), index + used))
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn three(self, first: usize) -> Result<[u32; 3], ReflectError> {
+        match *self.operands_from(first) {
+            [x, y, z, ..] => Ok([x, y, z]),
+            _ => Err(self.missing_operand()),
+        }
     }
 }
 
@@ -217,23 +278,13 @@ const fn stage(model: ExecutionModel) -> Option<ShaderStage> {
     })
 }
 
-fn three(instruction: Instruction<'_>, first: usize) -> Result<[u32; 3], ReflectError> {
-    Ok([
-        instruction.operand(first)?,
-        instruction.operand(first + 1)?,
-        instruction.operand(first + 2)?,
-    ])
-}
-
 impl Module {
     pub(super) fn parse(words: &[u32]) -> Result<Self, ReflectError> {
-        if words.len() < HEADER_WORDS {
+        let [magic, _, _, _, _, ..] = *words else {
             return Err(ReflectError::Header { words: words.len() });
-        }
-        match words.first() {
-            Some(&MAGIC) => {}
-            Some(&magic) => return Err(ReflectError::Magic(magic)),
-            None => return Err(ReflectError::Header { words: 0 }),
+        };
+        if magic != MAGIC {
+            return Err(ReflectError::Magic(magic));
         }
         let mut module = Self::default();
         let mut offset = HEADER_WORDS;
@@ -255,7 +306,7 @@ impl Module {
             module.instruction(instruction)?;
             offset = end;
         }
-        module.resolve()?;
+        module.resolve();
         Ok(module)
     }
 
@@ -265,11 +316,11 @@ impl Module {
         };
         match op {
             Op::Name => {
-                let (name, _) = instruction.string(1)?;
+                let name = instruction.string(1)?;
                 self.names.insert(instruction.operand(0)?, name);
             }
             Op::MemberName => {
-                let (name, _) = instruction.string(2)?;
+                let name = instruction.string(2)?;
                 self.member_names
                     .insert((instruction.operand(0)?, instruction.operand(1)?), name);
             }
@@ -279,16 +330,19 @@ impl Module {
                     .and_then(stage)
                     .ok_or(ReflectError::ExecutionModel(model))?;
                 let id = instruction.operand(1)?;
-                let (name, _) = instruction.string(2)?;
+                let name = instruction.string(2)?;
                 self.entry_points.push(EntryPoint { id, stage, name });
             }
             Op::ExecutionMode | Op::ExecutionModeId => {
                 let entry = instruction.operand(0)?;
-                let mode = instruction.operand(1)?;
-                if op == Op::ExecutionMode && mode == ExecutionMode::LocalSize as u32 {
-                    self.local_sizes.push((entry, three(instruction, 2)?));
-                } else if op == Op::ExecutionModeId && mode == ExecutionMode::LocalSizeId as u32 {
-                    self.local_size_ids.push((entry, three(instruction, 2)?));
+                match (op, ExecutionMode::from_u32(instruction.operand(1)?)) {
+                    (Op::ExecutionMode, Some(ExecutionMode::LocalSize)) => {
+                        self.local_sizes.push((entry, instruction.three(2)?));
+                    }
+                    (Op::ExecutionModeId, Some(ExecutionMode::LocalSizeId)) => {
+                        self.local_size_ids.push((entry, instruction.three(2)?));
+                    }
+                    _ => {}
                 }
             }
             Op::Decorate => {
@@ -318,10 +372,7 @@ impl Module {
                 let group = instruction.operand(0)?;
                 let pairs = instruction.operands_from(1);
                 if !pairs.len().is_multiple_of(2) {
-                    return Err(ReflectError::MissingOperand {
-                        offset: instruction.offset,
-                        opcode: instruction.opcode,
-                    });
+                    return Err(instruction.missing_operand());
                 }
                 for pair in pairs.chunks_exact(2) {
                     if let [target, member] = *pair {
@@ -332,8 +383,8 @@ impl Module {
             Op::Variable | Op::UntypedVariableKHR => {
                 let ty = instruction.operand(0)?;
                 let id = instruction.operand(1)?;
-                let class = instruction.operand(2)?;
-                if class != StorageClass::Function as u32 {
+                let class = Enumerant::parse(instruction.operand(2)?, StorageClass::from_u32);
+                if !class.is(&StorageClass::Function) {
                     let data_type = if op == Op::UntypedVariableKHR {
                         instruction.operand(3).ok()
                     } else {
@@ -382,8 +433,13 @@ impl Module {
                 columns: instruction.operand(2)?,
             },
             Op::TypeImage => Type::Image {
-                dim: instruction.operand(2)?,
-                sampled: instruction.operand(6)?,
+                dim: Enumerant::parse(instruction.operand(2)?, Dim::from_u32),
+                usage: match instruction.operand(6)? {
+                    0 => ImageUsage::Runtime,
+                    1 => ImageUsage::Sampled,
+                    2 => ImageUsage::Storage,
+                    sampled => return Err(ReflectError::ImageSampled { image: id, sampled }),
+                },
             },
             Op::TypeSampler => Type::Sampler,
             Op::TypeSampledImage => Type::SampledImage {
@@ -400,11 +456,11 @@ impl Module {
                 members: instruction.operands_from(1).to_vec(),
             },
             Op::TypePointer => Type::Pointer {
-                class: instruction.operand(1)?,
+                class: Enumerant::parse(instruction.operand(1)?, StorageClass::from_u32),
                 pointee: Some(instruction.operand(2)?),
             },
             Op::TypeUntypedPointerKHR => Type::Pointer {
-                class: instruction.operand(1)?,
+                class: Enumerant::parse(instruction.operand(1)?, StorageClass::from_u32),
                 pointee: None,
             },
             Op::TypeAccelerationStructureKHR => Type::AccelerationStructure,
@@ -423,18 +479,21 @@ impl Module {
         instruction: Instruction<'_>,
     ) -> Result<(), ReflectError> {
         let id = instruction.operand(1)?;
-        let constant = match op {
-            Op::Constant | Op::SpecConstant => Constant::Scalar {
+        let number = || -> Result<Scalar, ReflectError> {
+            let low = u64::from(instruction.operand(2)?);
+            let high = u64::from(instruction.operand(3).unwrap_or(0));
+            Ok(Scalar::Number {
                 ty: instruction.operand(0)?,
-                words: instruction.operands_from(2).to_vec(),
-                spec: op == Op::SpecConstant,
-            },
-            Op::ConstantTrue | Op::ConstantFalse | Op::SpecConstantTrue | Op::SpecConstantFalse => {
-                Constant::Bool {
-                    value: matches!(op, Op::ConstantTrue | Op::SpecConstantTrue),
-                    spec: matches!(op, Op::SpecConstantTrue | Op::SpecConstantFalse),
-                }
-            }
+                bits: low | (high << 32),
+            })
+        };
+        let constant = match op {
+            Op::Constant => Constant::Fixed(number()?),
+            Op::SpecConstant => Constant::Specialization(number()?),
+            Op::ConstantTrue => Constant::Fixed(Scalar::Bool(true)),
+            Op::ConstantFalse => Constant::Fixed(Scalar::Bool(false)),
+            Op::SpecConstantTrue => Constant::Specialization(Scalar::Bool(true)),
+            Op::SpecConstantFalse => Constant::Specialization(Scalar::Bool(false)),
             Op::ConstantComposite | Op::SpecConstantComposite => Constant::Composite {
                 constituents: instruction.operands_from(2).to_vec(),
             },
@@ -446,9 +505,9 @@ impl Module {
         Ok(())
     }
 
-    fn resolve(&mut self) -> Result<(), ReflectError> {
+    fn resolve(&mut self) {
         for &(group, target) in &self.groups {
-            if let Some(decorations) = self.decorations.get(&group).cloned() {
+            if let Some(decorations) = self.decorations.get(&group).copied() {
                 self.decorations
                     .entry(target)
                     .or_default()
@@ -456,14 +515,13 @@ impl Module {
             }
         }
         for &(group, target, member) in &self.member_groups {
-            if let Some(decorations) = self.decorations.get(&group).cloned() {
+            if let Some(decorations) = self.decorations.get(&group).copied() {
                 self.member_decorations
                     .entry((target, member))
                     .or_default()
                     .merge(&decorations);
             }
         }
-        Ok(())
     }
 
     pub(super) fn pointee(&self, variable: &Variable) -> Result<Option<u32>, ReflectError> {
@@ -488,13 +546,13 @@ impl Module {
     }
 
     pub(super) fn decorations(&self, id: u32) -> Decorations {
-        self.decorations.get(&id).cloned().unwrap_or_default()
+        self.decorations.get(&id).copied().unwrap_or_default()
     }
 
     pub(super) fn member_decorations(&self, id: u32, member: u32) -> Decorations {
         self.member_decorations
             .get(&(id, member))
-            .cloned()
+            .copied()
             .unwrap_or_default()
     }
 
@@ -509,30 +567,23 @@ impl Module {
             .cloned()
     }
 
-    fn integer(&self, id: u32) -> Option<(u64, bool)> {
-        let Some(&Constant::Scalar {
-            ref words, spec, ..
-        }) = self.constants.get(&id)
-        else {
-            return None;
-        };
-        let low = u64::from(words.first().copied().unwrap_or(0));
-        let high = u64::from(words.get(1).copied().unwrap_or(0));
-        Some((low | (high << 32), spec))
+    fn integer(&self, id: u32) -> Option<u64> {
+        match *self.constants.get(&id)? {
+            Constant::Fixed(Scalar::Number { bits, .. })
+            | Constant::Specialization(Scalar::Number { bits, .. }) => Some(bits),
+            _ => None,
+        }
     }
 
     pub(super) fn array_length(&self, array: u32, length: u32) -> Result<u32, ReflectError> {
         self.integer(length)
-            .and_then(|(value, _)| u32::try_from(value).ok())
+            .and_then(|value| u32::try_from(value).ok())
             .ok_or(ReflectError::ArrayLength { array })
     }
 
     pub(super) fn scalar_type(&self, id: u32) -> Option<ScalarType> {
         Some(match *self.types.get(&id)? {
-            Type::Bool => ScalarType {
-                kind: ScalarKind::Bool,
-                width: 32,
-            },
+            Type::Bool => ScalarType::BOOL,
             Type::Int { width, signed } => ScalarType {
                 kind: if signed {
                     ScalarKind::Int
@@ -550,11 +601,12 @@ impl Module {
     }
 
     fn dimension(&self, id: u32) -> Result<WorkgroupDimension, ReflectError> {
-        let (value, spec) = self
+        let size = self
             .integer(id)
+            .and_then(|value| u32::try_from(value).ok())
             .ok_or(ReflectError::NonConstantWorkgroupSize(id))?;
-        let size = u32::try_from(value).map_err(|_| ReflectError::NonConstantWorkgroupSize(id))?;
-        Ok(match self.decorations(id).spec_id.filter(|_| spec) {
+        let specialized = matches!(self.constants.get(&id), Some(Constant::Specialization(_)));
+        Ok(match self.decorations(id).spec_id.filter(|_| specialized) {
             Some(spec_id) => WorkgroupDimension::Specialization {
                 id: spec_id,
                 default: size,
@@ -571,7 +623,9 @@ impl Module {
             let Constant::Composite { ref constituents } = *constant else {
                 return None;
             };
-            (self.decorations(id).built_in == Some(BuiltIn::WorkgroupSize as u32))
+            self.decorations(id)
+                .built_in
+                .is_some_and(|built_in| built_in.is(&BuiltIn::WorkgroupSize))
                 .then_some((id, constituents))
         });
         let ids = match built_in {
@@ -604,27 +658,20 @@ impl Module {
     ) -> Result<Vec<SpecializationConstant>, ReflectError> {
         let mut constants = Vec::new();
         for (&constant_id, constant) in &self.constants {
+            let Constant::Specialization(scalar) = *constant else {
+                continue;
+            };
             let Some(spec_id) = self.decorations(constant_id).spec_id else {
                 continue;
             };
-            let (scalar, default) = match *constant {
-                Constant::Bool { value, spec: true } => (
-                    ScalarType {
-                        kind: ScalarKind::Bool,
-                        width: 32,
-                    },
-                    ScalarValue::Bool(value),
-                ),
-                Constant::Scalar { ty, spec: true, .. } => {
+            let (scalar, default) = match scalar {
+                Scalar::Bool(value) => (ScalarType::BOOL, ScalarValue::Bool(value)),
+                Scalar::Number { ty, bits } => {
                     let scalar = self
                         .scalar_type(ty)
                         .ok_or(ReflectError::SpecializationType(constant_id))?;
-                    let (bits, _) = self
-                        .integer(constant_id)
-                        .ok_or(ReflectError::SpecializationType(constant_id))?;
-                    (scalar, value(scalar, bits))
+                    (scalar, decode_default(scalar, bits))
                 }
-                _ => continue,
             };
             constants.push(SpecializationConstant {
                 spec_id,
@@ -639,7 +686,7 @@ impl Module {
     }
 }
 
-fn value(scalar: ScalarType, bits: u64) -> ScalarValue {
+fn decode_default(scalar: ScalarType, bits: u64) -> ScalarValue {
     let width = if scalar.width == 0 || scalar.width > 64 {
         64
     } else {
@@ -651,6 +698,6 @@ fn value(scalar: ScalarType, bits: u64) -> ScalarValue {
         ScalarKind::Bool => ScalarValue::Bool(raw != 0),
         ScalarKind::Int => ScalarValue::Int((raw << unused).cast_signed() >> unused),
         ScalarKind::Uint => ScalarValue::Uint(raw),
-        ScalarKind::Float | ScalarKind::EncodedFloat(_) => ScalarValue::Float(raw),
+        ScalarKind::Float | ScalarKind::EncodedFloat(_) => ScalarValue::FloatBits(raw),
     }
 }

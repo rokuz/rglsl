@@ -11,13 +11,15 @@ mod tests;
 
 use rglsl_types::ShaderStage;
 
-pub use error::{LayoutError, ReflectError};
+pub use error::{BindingUse, LayoutError, ReflectError};
 pub use json::program_json;
 pub use pipeline::{
-    DescriptorSetLayout, LayoutBinding, PipelineLayout, PushConstantRange, StageFlags,
+    DescriptorSetLayout, LayoutBinding, PipelineLayout, PushConstantRange, vulkan_stage_flags,
 };
+pub use rglsl_types::ShaderStageMask;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Reflection {
     pub stage: ShaderStage,
     pub entry_point: String,
@@ -52,6 +54,7 @@ impl WorkgroupDimension {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum DescriptorType {
     Sampler,
     CombinedImageSampler,
@@ -67,20 +70,6 @@ pub enum DescriptorType {
 }
 
 impl DescriptorType {
-    pub const ALL: [Self; 11] = [
-        Self::Sampler,
-        Self::CombinedImageSampler,
-        Self::SampledImage,
-        Self::StorageImage,
-        Self::UniformTexelBuffer,
-        Self::StorageTexelBuffer,
-        Self::UniformBuffer,
-        Self::StorageBuffer,
-        Self::InputAttachment,
-        Self::AccelerationStructure,
-        Self::Tensor,
-    ];
-
     pub const fn vulkan(self) -> u32 {
         match self {
             Self::Sampler => 0,
@@ -95,12 +84,6 @@ impl DescriptorType {
             Self::AccelerationStructure => 1_000_150_000,
             Self::Tensor => 1_000_460_000,
         }
-    }
-
-    pub fn from_vulkan(value: u32) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|descriptor| descriptor.vulkan() == value)
     }
 
     pub const fn name(self) -> &'static str {
@@ -121,6 +104,7 @@ impl DescriptorType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DescriptorBinding {
     pub set: u32,
     pub binding: u32,
@@ -132,6 +116,7 @@ pub struct DescriptorBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BlockLayout {
     pub size: u32,
     pub runtime_array_stride: Option<u32>,
@@ -153,6 +138,7 @@ impl DescriptorHeap {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PushConstantBlock {
     pub name: Option<String>,
     pub variable_id: u32,
@@ -169,6 +155,7 @@ impl PushConstantBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct InterfaceVariable {
     pub location: u32,
     pub component: u32,
@@ -189,6 +176,13 @@ pub struct Format {
 pub struct ScalarType {
     pub kind: ScalarKind,
     pub width: u32,
+}
+
+impl ScalarType {
+    pub const BOOL: Self = Self {
+        kind: ScalarKind::Bool,
+        width: 32,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -213,6 +207,7 @@ impl ScalarKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SpecializationConstant {
     pub spec_id: u32,
     pub name: Option<String>,
@@ -226,7 +221,7 @@ pub enum ScalarValue {
     Bool(bool),
     Int(i64),
     Uint(u64),
-    Float(u64),
+    FloatBits(u64),
 }
 
 impl ScalarValue {
@@ -239,7 +234,7 @@ impl ScalarValue {
         match self {
             Self::Bool(value) => value as u64,
             Self::Int(value) => value.cast_unsigned() & mask,
-            Self::Uint(value) | Self::Float(value) => value & mask,
+            Self::Uint(value) | Self::FloatBits(value) => value & mask,
         }
     }
 }

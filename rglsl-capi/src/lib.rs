@@ -6,7 +6,7 @@ mod api;
               the safety contract of every function is in rglsl-capi/README.md"
 )]
 mod ffi;
-mod reflection;
+mod spirv_reflection;
 
 pub use api::{
     Blob, CompileOptions, Compiler, DebugInfo, Diagnostics, Disassembly, IncludeResult, Limits,
@@ -29,7 +29,7 @@ pub use api::{
     Stage, TargetGpu,
 };
 pub use ffi::*;
-pub use reflection::{
+pub use spirv_reflection::{
     DescriptorType, Interface, PipelineLayout, RGLSL_DESCRIPTOR_HEAP_RESOURCE,
     RGLSL_DESCRIPTOR_HEAP_SAMPLER, RGLSL_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE,
     RGLSL_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RGLSL_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
@@ -39,5 +39,5 @@ pub use reflection::{
     RGLSL_DESCRIPTOR_TYPE_UNIFORM_BUFFER, RGLSL_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
     RGLSL_INTERFACE_INPUT, RGLSL_INTERFACE_OUTPUT, RGLSL_SCALAR_KIND_BOOL,
     RGLSL_SCALAR_KIND_ENCODED_FLOAT, RGLSL_SCALAR_KIND_FLOAT, RGLSL_SCALAR_KIND_INT,
-    RGLSL_SCALAR_KIND_UINT, Reflection, ScalarKind,
+    RGLSL_SCALAR_KIND_UINT, ScalarKind, SpirvReflection,
 };
