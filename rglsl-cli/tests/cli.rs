@@ -895,6 +895,86 @@ fn reflection_needs_linking_and_survives_errors() -> TestResult {
 }
 
 #[test]
+fn writes_the_spirv_reflection_as_json() -> TestResult {
+    let directory = work_dir("reflection_json")?;
+    fs::write(
+        directory.join("shader.vert"),
+        "#version 450
+layout(binding = 1) uniform Block { vec4 tint; };
+layout(push_constant) uniform Constants { vec4 offset; } constants;
+layout(location = 0) in vec4 position;
+void main() { gl_Position = position * tint + constants.offset; }
+",
+    )?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(
+        &directory,
+        &[
+            "-V",
+            "--reflection-json",
+            "reflection.json",
+            "-o",
+            "program.spv",
+            "shader.vert",
+            "shader.frag",
+        ],
+    )?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let json: String = fs::read_to_string(directory.join("reflection.json"))?
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    for expected in [
+        "\"stage\":\"vertex\"",
+        "\"stage\":\"fragment\"",
+        "\"type\":\"uniform_buffer\"",
+        "\"type\":\"combined_image_sampler\"",
+        "\"pipeline_layout\":{",
+        "\"name\":\"Block\",\"stages\":[\"vertex\",\"fragment\"]",
+        "\"push_constant_ranges\":[{\"stages\":[\"vertex\"],\"bank\":null,\"offset\":0,\"size\":16}]",
+    ] {
+        assert!(json.contains(expected), "{expected}\n{json}");
+    }
+    fs::write(
+        directory.join("conflict.frag"),
+        "#version 450
+layout(binding = 1) uniform sampler2D image;
+layout(location = 0) out vec4 color;
+void main() { color = texture(image, vec2(0.5)); }
+",
+    )?;
+    let run = rglsl(
+        &directory,
+        &[
+            "-V",
+            "--reflection-json",
+            "conflict.json",
+            "-o",
+            "conflict.spv",
+            "shader.vert",
+            "conflict.frag",
+        ],
+    )?;
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("set 0 binding 1 is uniform_buffer x1"),
+        "{}",
+        run.stderr
+    );
+    let run = rglsl(
+        &directory,
+        &["-l", "--reflection-json", "none.json", "shader.frag"],
+    )?;
+    assert_eq!(run.code, Some(1));
+    assert!(
+        run.stderr.contains("needs SPIR-V generation"),
+        "{}",
+        run.stderr
+    );
+    Ok(())
+}
+
+#[test]
 fn code_generation_options_change_the_spirv() -> TestResult {
     let directory = work_dir("code_generation")?;
     fs::write(

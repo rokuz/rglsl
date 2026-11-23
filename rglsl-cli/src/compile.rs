@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rglsl_link::{
     Build, CompileOptions, Compiler, DiagnosticFormat, Diagnostics, Input, ObjectModule,
-    ProgramOptions, ResourceLimits, ShaderStage, Source,
+    ProgramOptions, Reflection, ResourceLimits, ShaderStage, Source, reflection,
 };
 
 use crate::args::{EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Options, VersionDump};
@@ -408,9 +408,10 @@ impl<'a> Session<'a> {
     }
 
     fn emit(&mut self, build: &Build) -> Result<i32, Exit> {
+        let mut reflections = Vec::with_capacity(build.stages.len());
         for stage in &build.stages {
-            let words = match stage.result {
-                Ok(ref binary) => &binary.words,
+            let binary = match stage.result {
+                Ok(ref binary) => binary,
                 Err(ref diagnostic) => {
                     if !self.options.suppress_info {
                         output::err!("{}\n", diagnostic.format(DiagnosticFormat::default()));
@@ -419,6 +420,8 @@ impl<'a> Session<'a> {
                     return Ok(EXIT_COMPILE);
                 }
             };
+            let words = &binary.words;
+            reflections.push(&binary.reflection);
             let path = self
                 .options
                 .output
@@ -448,7 +451,29 @@ impl<'a> Session<'a> {
                 }
             }
         }
-        Ok(EXIT_SUCCESS)
+        self.write_reflection(&reflections)
+    }
+
+    fn write_reflection(&self, reflections: &[&Reflection]) -> Result<i32, Exit> {
+        let Some(ref path) = self.options.reflection_json else {
+            return Ok(EXIT_SUCCESS);
+        };
+        let json = match reflection::program_json(reflections) {
+            Ok(json) => json,
+            Err(error) => {
+                if !self.options.suppress_info {
+                    output::err!("ERROR: Linking stages: {error}");
+                }
+                return Ok(EXIT_LINK);
+            }
+        };
+        if fs::write(path, json).is_ok() {
+            Ok(EXIT_SUCCESS)
+        } else {
+            Err(Exit::Printed(format!(
+                "ERROR: Failed to open file: {path}\n"
+            )))
+        }
     }
 
     fn write_depfile(&self, units: &[Unit]) -> Result<(), Exit> {

@@ -58,6 +58,8 @@ rglsl -V -l -O main.vert main.frag                    # optimized; the linked st
                                                       # pipeline (glslang's --lto is part of -O)
 rglsl -V --specialize "3:16 4:true" shader.comp       # specialization constants 3 and 4 get
                                                       # these values while compiling
+rglsl -V --reflection-json layout.json main.vert main.frag
+                                                      # reflection of the SPIR-V as JSON
 ```
 
 ### Optimizer

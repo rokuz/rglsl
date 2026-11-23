@@ -41,6 +41,7 @@ pub struct Options {
     pub absolute_path: bool,
     pub stdin: bool,
     pub depfile: Option<String>,
+    pub reflection_json: Option<String>,
     pub version: Option<VersionDump>,
     pub dump_config: bool,
     pub config_file: Option<String>,
@@ -234,6 +235,10 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
         "validate-io" => options.validate_io = true,
+        "reflection-json" => match cursor.take_next() {
+            Some(name) => options.reflection_json = Some(name),
+            None => return Err(Exit::detailed("no <file> provided", word)),
+        },
         "target-gpu" => match cursor.take_next() {
             Some(name) => match TargetGpu::from_name(&name) {
                 Some(gpu) => options.optimization.target_gpu = Some(gpu),
@@ -425,6 +430,11 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     if options.validate_io && !options.link {
         return Err(Exit::error(
             "cross stage IO validation requires -l for linking",
+        ));
+    }
+    if options.reflection_json.is_some() && !options.spirv {
+        return Err(Exit::error(
+            "`--reflection-json` reflects the generated SPIR-V and needs SPIR-V generation (-V, -H or --target-env vulkan...)",
         ));
     }
     if options.output.is_some() && !options.spirv && !options.object {
