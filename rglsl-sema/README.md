@@ -38,6 +38,8 @@ for diagnostic in &analysis.diagnostics {
   error: an erroneous expression gets the error type, which suppresses follow-on diagnostics.
 
 `Options::relaxed_uniforms` accepts non-opaque uniforms outside blocks, like glslang's `-R`.
+`Options::require_bindings` and `Options::require_locations` report a resource without a
+`binding` and a stage input or output without a `location`, as glslang `-V` does.
 
 ## Agreement with glslang
 
@@ -50,9 +52,8 @@ glslang that differs from the specification, for instance trailing unknown lette
 are dropped (`v.xk` is `v.x`) and implicitly sized arrays can be compared.
 
 Out of scope here and left to lowering: the semantics of layout qualifiers beyond recording them
-(name and constant value), `location` / `binding` requirements, link-time checks other than a
-missing `main` and a called function without a body, recursion, and everything that needs an
-`#extension`.
+(name and constant value), link-time checks other than a missing `main` and a called function
+without a body, recursion, and everything that needs an `#extension`.
 
 ## Tools
 

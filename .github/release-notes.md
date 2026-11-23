@@ -67,7 +67,8 @@ rglsl -V main.frag lighting.glsl -o shader.spv        # compile and link
 rglsl -V -l -O main.vert main.frag                    # optimized
 ```
 
-Options, exit codes and messages are `glslangValidator`'s.
+Options, exit codes and messages are `glslangValidator`'s; rglsl has only its options for Vulkan
+GLSL.
 
 The binaries are not signed: macOS may need `xattr -dr com.apple.quarantine` on the unpacked
 directory, and Windows SmartScreen may warn about `rglsl.exe`.
