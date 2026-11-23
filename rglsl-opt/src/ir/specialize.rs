@@ -62,6 +62,7 @@ fn specialize(
     let mut resolved: Vec<Option<Handle<Constant>>> = vec![None; module.overrides.len()];
     let mut tracker = ExpressionKindTracker::from_arena(&module.global_expressions);
     let mut layouter = Layouter::default();
+    let mut scratch = Scratch::default();
     let references = references(module);
     let handles: Vec<Handle<Override>> =
         module.overrides.iter().map(|(handle, _)| handle).collect();
@@ -87,8 +88,15 @@ fn specialize(
                 let Some(init) = item.init else {
                     continue;
                 };
-                let Some(value) =
-                    evaluated(module, &mut tracker, &mut layouter, init, &resolved, span)?
+                let Some(value) = evaluated(
+                    module,
+                    &mut tracker,
+                    &mut layouter,
+                    &mut scratch,
+                    init,
+                    &resolved,
+                    span,
+                )?
                 else {
                     continue;
                 };
@@ -167,20 +175,66 @@ fn set_value(
     Ok(init)
 }
 
+#[derive(Default)]
+struct Scratch {
+    needed: Vec<bool>,
+    map: Vec<Option<Handle<Expression>>>,
+    visited: Vec<Handle<Expression>>,
+}
+
+impl Scratch {
+    fn reset(&mut self) {
+        for handle in self.visited.drain(..) {
+            if let Some(slot) = self.needed.get_mut(handle.index()) {
+                *slot = false;
+            }
+            if let Some(slot) = self.map.get_mut(handle.index()) {
+                *slot = None;
+            }
+        }
+    }
+}
+
 fn evaluated(
     module: &mut Module,
     tracker: &mut ExpressionKindTracker,
     layouter: &mut Layouter,
+    scratch: &mut Scratch,
+    root: Handle<Expression>,
+    resolved: &[Option<Handle<Constant>>],
+    span: Span,
+) -> Result<Option<Handle<Expression>>, Failure> {
+    let result = evaluate(module, tracker, layouter, scratch, root, resolved, span);
+    scratch.reset();
+    result
+}
+
+fn evaluate(
+    module: &mut Module,
+    tracker: &mut ExpressionKindTracker,
+    layouter: &mut Layouter,
+    scratch: &mut Scratch,
     root: Handle<Expression>,
     resolved: &[Option<Handle<Constant>>],
     span: Span,
 ) -> Result<Option<Handle<Expression>>, Failure> {
     let count = module.global_expressions.len();
-    let mut needed = vec![false; count];
+    if scratch.needed.len() < count {
+        scratch.needed.resize(count, false);
+        scratch.map.resize(count, None);
+    }
+    let Scratch {
+        ref mut needed,
+        ref mut map,
+        ref mut visited,
+    } = *scratch;
     let mut pending = vec![root];
     let mut resolvable = true;
     while let Some(handle) = pending.pop() {
-        let Some(slot) = needed.get_mut(handle.index()) else {
+        let Some(slot) = needed
+            .get_mut(handle.index())
+            .filter(|_| handle.index() < count)
+        else {
             return Err(Failure::Internal(format!(
                 "global expression {handle:?} is out of range"
             )));
@@ -189,6 +243,7 @@ fn evaluated(
             continue;
         }
         *slot = true;
+        visited.push(handle);
         let expression = module
             .global_expressions
             .try_get(handle)
@@ -206,13 +261,17 @@ fn evaluated(
             return Ok(None);
         }
     }
-    let mut map: Vec<Option<Handle<Expression>>> = vec![None; count];
-    let sources: Vec<(Handle<Expression>, Expression)> = module
-        .global_expressions
+    visited.sort_unstable();
+    let sources = visited
         .iter()
-        .filter(|&(handle, _)| needed.get(handle.index()) == Some(&true))
-        .map(|(handle, expression)| (handle, expression.clone()))
-        .collect();
+        .map(|&handle| {
+            module
+                .global_expressions
+                .try_get(handle)
+                .map(|expression| (handle, expression.clone()))
+                .map_err(|error| Failure::Internal(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut evaluator = ConstantEvaluator::for_glsl_module(module, tracker, layouter);
     let mut last = None;
     for (handle, mut expression) in sources {
