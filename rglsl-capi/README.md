@@ -113,17 +113,17 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_diagnostics_format(diagnostics, flags, &text)`, `rglsl_diagnostics_info_log` | glslang's message lines, with `RGLSL_FORMAT_ERROR_COLUMN`, `_ABSOLUTE_PATH`, `_UNNAMED_SOURCE`; the info log adds glslang's summary line |
 | `rglsl_link(objects, count, options, &program, &diagnostics)` | objects to a program; `options` may be `NULL` |
 | `rglsl_program_stage_count`, `_stage`, `_entry_point`, `_spirv`, `_warnings` | the SPIR-V binary and entry point of every stage, link warnings |
-| `rglsl_program_stage_reflection(program, index)` | the reflection of a stage's SPIR-V, owned by the program |
-| `rglsl_reflect(words, count, &reflection, &diagnostics)` | the reflection of any SPIR-V module with one entry point; `RGLSL_RESULT_INVALID_SPIRV` with a diagnostic for malformed words |
-| `rglsl_reflection_stage`, `_entry_point`, `_local_size(reflection, dimension, &size, &specialized, &spec_id)` | stage, entry point, local size (`RGLSL_RESULT_INVALID_ARGUMENT` without one) |
-| `rglsl_reflection_binding_count`, `_binding(reflection, index, &set, &binding, &type, &count, &variable_id)`, `_binding_name`, `_binding_block(reflection, index, &size, &runtime_array_stride)` | descriptor bindings sorted by set and binding: `rglsl_descriptor_type` (`RGLSL_DESCRIPTOR_TYPE_*`, the values of `VkDescriptorType`), count (0 for a runtime array), name (`NULL` without debug names), the fixed size of a buffer block and the stride of its trailing runtime array (0 without one) |
-| `rglsl_reflection_descriptor_heaps` | `RGLSL_DESCRIPTOR_HEAP_RESOURCE`, `_SAMPLER`: the descriptor heaps the stage uses |
-| `rglsl_reflection_push_constant_count`, `_push_constant(reflection, index, &offset, &size, &variable_id)`, `_push_constant_name`, `_push_constant_bank` | push constant blocks: lowest member offset and size; the `GL_NV_push_constant_bank` bank and member offset |
-| `rglsl_reflection_interface_count(reflection, direction)`, `_interface`, `_interface_name`, `_interface_type` | stage inputs (`RGLSL_INTERFACE_INPUT`) and outputs (`RGLSL_INTERFACE_OUTPUT`) without built-ins, members of blocks one by one: location, component, `rglsl_scalar_kind` (`RGLSL_SCALAR_KIND_*`), bit width, vector size, columns, array dimensions |
-| `rglsl_reflection_specialization_count`, `_specialization(reflection, index, &spec_id, &kind, &width, &default_bits, &result_id)`, `_specialization_name` | specialization constants: `SpecId`, type, the bits of the default value |
-| `rglsl_reflection_json(reflection, &text)`, `rglsl_program_reflection_json(program, &text, &diagnostics)` | the reflection as JSON; of a program with the merged pipeline layout (`--reflection-json`) |
+| `rglsl_program_spirv_reflection(program, index, &reflection, &diagnostics)` | the reflection of a stage's SPIR-V, computed on request: compiling and linking never fail because of it; `RGLSL_RESULT_INVALID_SPIRV` with a diagnostic when the words cannot be reflected |
+| `rglsl_spirv_reflect(words, count, &reflection, &diagnostics)` | the reflection of any SPIR-V module with one entry point; `RGLSL_RESULT_INVALID_SPIRV` with a diagnostic for malformed words |
+| `rglsl_spirv_reflection_stage`, `_entry_point`, `_local_size(reflection, dimension, &present, &size, &specialized, &spec_id)` | stage, entry point, local size (`present` is `false` without one) |
+| `rglsl_spirv_reflection_binding_count`, `_binding(reflection, index, &set, &binding, &type, &count, &variable_id)`, `_binding_name`, `_binding_block(reflection, index, &is_block, &size, &runtime_array_stride)` | descriptor bindings sorted by set and binding: `rglsl_descriptor_type` (`RGLSL_DESCRIPTOR_TYPE_*`, the values of `VkDescriptorType`), count (0 for a runtime array), name (`NULL` without debug names), whether it is a buffer block, its fixed size and the stride of its trailing runtime array (0 without one) |
+| `rglsl_spirv_reflection_descriptor_heaps` | `RGLSL_DESCRIPTOR_HEAP_RESOURCE`, `_SAMPLER`: the descriptor heaps the stage uses |
+| `rglsl_spirv_reflection_push_constant_count`, `_push_constant(reflection, index, &offset, &size, &variable_id)`, `_push_constant_name`, `_push_constant_bank(reflection, index, &banked, &bank, &bank_offset)` | push constant blocks: lowest member offset and size; the `GL_NV_push_constant_bank` bank and member offset (`banked` is `false` without a bank) |
+| `rglsl_spirv_reflection_interface_count(reflection, direction)`, `_interface(reflection, direction, index, &location, &component, &variable_id)`, `_interface_name`, `_interface_type(reflection, direction, index, &kind, &encoding, &width, &vector_size, &columns, &array, &array_rank)` | stage inputs (`RGLSL_INTERFACE_INPUT`) and outputs (`RGLSL_INTERFACE_OUTPUT`) without built-ins, members of blocks one by one: location, component, `rglsl_scalar_kind` (`RGLSL_SCALAR_KIND_*`; for `RGLSL_SCALAR_KIND_ENCODED_FLOAT` the SPIR-V `FPEncoding` in `encoding`), bit width, vector size, columns, array dimensions |
+| `rglsl_spirv_reflection_specialization_count`, `_specialization(reflection, index, &spec_id, &kind, &encoding, &width, &default_bits, &result_id)`, `_specialization_name` | specialization constants: `SpecId`, type, the bits of the default value |
+| `rglsl_spirv_reflection_json(reflection, &text)`, `rglsl_program_spirv_reflection_json(program, &text, &diagnostics)` | the reflection as JSON; of a program with its pipeline layout (`--spirv-reflection-json`) |
 | `rglsl_program_pipeline_layout(program, &layout, &diagnostics)`, `rglsl_pipeline_layout_create(reflections, count, &layout, &diagnostics)` | the stages merged into a pipeline layout; a binding whose type or count differs between stages is `RGLSL_RESULT_LINK_FAILED` |
-| `rglsl_pipeline_layout_binding_count`, `_binding(layout, index, &set, &binding, &type, &count, &stage_flags)`, `_binding_name`, `_push_constant_range_count`, `_push_constant_range(layout, index, &stage_flags, &offset, &size)`, `_push_constant_range_bank` | bindings sorted by set and binding with the stages that use them (`VkShaderStageFlags` bits), push constant ranges per stage |
+| `rglsl_pipeline_layout_binding_count`, `_binding(layout, index, &set, &binding, &type, &count, &stage_flags)`, `_binding_name`, `_push_constant_range_count`, `_push_constant_range(layout, index, &stage_flags, &offset, &size)`, `_push_constant_range_bank(layout, index, &banked, &bank)` | bindings sorted by set and binding with the stages that use them (`VkShaderStageFlags` bits), push constant ranges per stage |
 | `rglsl_diagnostics_count`, `_text`, `_message`, `_location` | every diagnostic as a glslang-style line, all of them as one text, severity, file, line and column |
 | `rglsl_*_destroy` | frees a handle; `NULL` is ignored |
 
@@ -135,8 +135,10 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
   `_INVALID_OBJECT` (bytes that are not an object file of this version), `_INVALID_SPIRV`
   (words that do not disassemble or reflect) and `_INTERNAL_ERROR`
   (a panic inside rglsl, caught at the boundary; it is a bug). Getters return `NULL` or `0` for
-  a `NULL` handle or an index out of range. The output pointers of the reflection and pipeline
-  layout getters may be `NULL` for values the caller does not need.
+  a `NULL` handle or an index out of range. Output pointers are required: a `NULL` one is
+  `RGLSL_RESULT_INVALID_ARGUMENT`, and every output is set to 0, `false` or `NULL` first, so it
+  holds that value after an error. A value a module may lack (a local size, a push constant bank,
+  the block of a binding) comes with a `bool` that says whether it is present.
 - **Enumerations** (`rglsl_result`, `rglsl_stage`, `rglsl_severity`, `rglsl_debug_info`,
   `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`, `rglsl_descriptor_type`,
   `rglsl_scalar_kind`, `rglsl_interface`) are `uint32_t` with

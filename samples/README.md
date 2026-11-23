@@ -11,7 +11,7 @@ diagnostics:
 | `link_spirv(&[ObjectModule], &ProgramOptions)` | object modules of one or more stages | `Program`: SPIR-V words per stage, warnings |
 | `compile_and_link(&[(source, CompileOptions)], &ProgramOptions)` | GLSL texts | `Program` |
 | `write_object(&ObjectModule)` / `read_object(&[u8])` | object module / `.rglo` bytes | `.rglo` bytes / object module |
-| `Program::pipeline_layout()`, `reflection::reflect(&[u32])` | a linked program / SPIR-V words | descriptor set layouts and push constant ranges / the reflection of one stage |
+| `StageBinary::spirv_reflection()`, `spirv_reflection::reflect(&[u32])`, `spirv_reflection::PipelineLayout::new(&reflections)` | a stage binary / SPIR-V words / reflections of the stages of a program | the reflection of one stage / descriptor set layouts and push constant ranges |
 
 `Compiler` has `compile`, `compile_with_includer` and `compile_and_link` as methods. It keeps the
 built-in tables (the built-in functions and variables of a GLSL version, stage and resource

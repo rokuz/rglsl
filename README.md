@@ -58,7 +58,7 @@ rglsl -V -l -O main.vert main.frag                    # optimized; the linked st
                                                       # pipeline (glslang's --lto is part of -O)
 rglsl -V --specialize "3:16 4:true" shader.comp       # specialization constants 3 and 4 get
                                                       # these values while compiling
-rglsl -V --reflection-json layout.json main.vert main.frag
+rglsl -V --spirv-reflection-json layout.json main.vert main.frag
                                                       # reflection of the SPIR-V as JSON
 ```
 
@@ -93,23 +93,27 @@ for binary in &program.stages {
 }
 ```
 
-Every stage binary carries its reflection (`binary.reflection`), read from the final SPIR-V
-words: stage, entry point and local size (with specialization constant ids), descriptor bindings
-sorted by set and binding (Vulkan descriptor type, count, name, buffer block size and runtime
-array stride), push constant blocks (offset and size), stage inputs and outputs by location and
-component with their format, and specialization constants with their ids, types and defaults.
-`Program::pipeline_layout()` merges the stages into descriptor set layouts with the stages of
-every binding and push constant ranges per stage; a binding whose type or count differs between
-stages is an error. `rglsl_link::reflection::reflect(words)` reflects any SPIR-V module with one
-entry point, glslang's too, and returns an error, never a panic, for malformed words. (`-q`'s
-glslang-style reflection of the GLSL source is a different thing: `rglsl_link::reflect`.)
+`binary.spirv_reflection()` reflects a stage binary on request, from its final SPIR-V words
+(compiling and linking never fail because of it): stage, entry point and local size (with
+specialization constant ids), descriptor bindings sorted by set and binding (Vulkan descriptor
+type, count, name, buffer block size and runtime array stride), push constant blocks (offset and
+size), stage inputs and outputs by location and component with their format, and specialization
+constants with their ids, types and defaults. `Program::spirv_reflections()` reflects every
+stage; `spirv_reflection::PipelineLayout::new` merges reflections into descriptor set layouts with
+the stages of every binding and push constant ranges per stage; a binding whose type or count
+differs between stages is an error. `rglsl_link::spirv_reflection::reflect(words)` reflects any
+SPIR-V module with one entry point, glslang's too, and returns an error, never a panic, for
+malformed words. (`-q`'s glslang-style reflection of the GLSL source is a different thing:
+`rglsl_link::reflect`.)
 
 ```rust
-let layout = program.pipeline_layout()?;
+use rglsl_link::spirv_reflection::{PipelineLayout, vulkan_stage_flags};
+
+let layout = PipelineLayout::new(&program.spirv_reflections()?)?;
 for set in &layout.sets {
     for binding in &set.bindings {
         add_binding(set.set, binding.binding, binding.descriptor_type.vulkan(), binding.count,
-                    binding.stages.bits());
+                    vulkan_stage_flags(binding.stages));
     }
 }
 ```
