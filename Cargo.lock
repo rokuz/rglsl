@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "compile-and-link"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-link",
 ]
@@ -286,7 +286,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "link-objects"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-link",
 ]
@@ -370,7 +370,7 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "rglsl"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arbitrary",
  "arrayvec",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-ast"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-types",
  "thiserror",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-capi"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-dis",
  "rglsl-link",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-dis",
  "rglsl-link",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-derive"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -446,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-dis"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitflags",
  "rglsl-types",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-fuzz"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl-ast",
  "rglsl-sema",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-libfuzzer"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arbitrary",
  "cfg_aliases",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-link"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rglsl",
  "rglsl-ast",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-opt"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "half",
  "rglsl",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-pp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arrayvec",
  "rglsl-types",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-sema"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arrayvec",
  "bitflags",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-test"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitflags",
  "rglsl",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-types"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arbitrary",
  "arrayvec",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "rglsl-xtask"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "cbindgen",

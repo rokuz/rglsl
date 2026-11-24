@@ -69,7 +69,7 @@ shared library `rglsl::rglsl_c` and `main.cpp` (C++17) to the static library
 The package config comes from an unpacked release archive or from the build tree:
 
 ```sh
-cmake -S samples/c -B build -DCMAKE_PREFIX_PATH=/path/to/rglsl-c-0.1.3-linux-x86_64
+cmake -S samples/c -B build -DCMAKE_PREFIX_PATH=/path/to/rglsl-c-0.1.4-linux-x86_64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```

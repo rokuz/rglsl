@@ -29,8 +29,8 @@ Rust projects depend on the crates of [crates.io](https://crates.io/crates/rglsl
 
 ```toml
 [dependencies]
-rglsl-link = "0.1.3"
-rglsl-dis = "0.1.3"                                      # SPIR-V as text, reflection
+rglsl-link = "0.1.4"
+rglsl-dis = "0.1.4"                                      # SPIR-V as text, reflection
 ```
 
 Code that is not released yet comes from git:
