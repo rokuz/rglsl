@@ -25,9 +25,9 @@ pub(crate) fn common_paths(a: &[Vec<PathStep>], b: &[Vec<PathStep>]) -> Vec<Vec<
     a.iter().filter(|path| b.contains(path)).cloned().collect()
 }
 
-const fn rank(size: ArraySize, uniform_block: bool) -> Option<u32> {
+const fn rank(size: ArraySize, dynamic_is_largest: bool) -> Option<u32> {
     match size {
-        ArraySize::Dynamic => Some(if uniform_block { u32::MAX } else { 0 }),
+        ArraySize::Dynamic => Some(if dynamic_is_largest { u32::MAX } else { 0 }),
         ArraySize::Constant(length) => Some(length.get()),
         ArraySize::Pending(_) => None,
     }
@@ -37,12 +37,13 @@ fn merge_size(
     a: ArraySize,
     b: ArraySize,
     implicit: (bool, bool),
-    uniform_block: bool,
+    dynamic_is_largest: bool,
 ) -> Result<ArraySize, Mismatch> {
     if a == b {
         return Ok(a);
     }
-    let (Some(rank_a), Some(rank_b)) = (rank(a, uniform_block), rank(b, uniform_block)) else {
+    let (Some(rank_a), Some(rank_b)) = (rank(a, dynamic_is_largest), rank(b, dynamic_is_largest))
+    else {
         return Err(Mismatch::Types);
     };
     match implicit {
@@ -238,7 +239,7 @@ fn enter(
                 size: size_b,
             },
         ) => {
-            let size = merge_size(size_a, size_b, implicit.at(path), uniform_block)?;
+            let size = merge_size(size_a, size_b, implicit.at(path), true)?;
             path.push(PathStep::Element);
             frames.push(Unifying::BindingArray {
                 name: type_a.name,

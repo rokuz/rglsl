@@ -4,7 +4,10 @@ use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{ValidationFlags, ValidationMode, Validator};
 use rglsl::{AddressSpace, ArraySize, Linkage, ShaderStage, TypeInner};
-use rglsl_link::{LinkError, Linked, Options as LinkOptions, decode, encode, link, link_objects};
+use rglsl_link::{
+    LinkError, Linked, OptLevel, OptOptions, Options as LinkOptions, ProgramOptions, decode,
+    encode, link, link_objects, link_spirv,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -531,6 +534,95 @@ void main() { values[4] = 1.0; color = vec4(helper()); }
             explicit
         ])?,
         [LinkError::ImplicitSize("values".into())]
+    );
+    Ok(())
+}
+
+fn binding_array_size(linked: &Linked, name: &str) -> TestResult<ArraySize> {
+    let (_, global) = linked
+        .module
+        .global_variables
+        .iter()
+        .find(|(_, global)| global.name.as_deref() == Some(name))
+        .ok_or_else(|| format!("no global `{name}`"))?;
+    match linked.module.types[global.ty].inner {
+        TypeInner::BindingArray { size, .. } => Ok(size),
+        ref other => Err(format!("{other:?}").into()),
+    }
+}
+
+#[test]
+fn runtime_descriptor_arrays_stay_runtime_sized() -> TestResult {
+    const DECLARATIONS: &str = "#version 460
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 0, binding = 0) uniform texture2D textures[];
+layout(set = 0, binding = 1) uniform sampler samplers[];
+";
+    let sampling = format!(
+        "{DECLARATIONS}vec4 sampled(uint t, uint s, vec2 uv) {{ return texture(sampler2D(textures[t], samplers[s]), uv); }}
+"
+    );
+    let mains = [
+        "vec4 sampled(uint t, uint s, vec2 uv);
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+void main() { color = sampled(1u, 0u, uv); }
+",
+        "vec4 sampled(uint t, uint s, vec2 uv);
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+void main() { color = sampled(3u, 2u, uv) + texture(sampler2D(textures[1], samplers[0]), uv); }
+",
+    ];
+    for main in mains {
+        let main = format!("{DECLARATIONS}{main}");
+        for library_first in [false, true] {
+            let main = object(ShaderStage::Fragment, &main)?;
+            let lib = library(&sampling)?;
+            let objects = if library_first {
+                [lib, main]
+            } else {
+                [main, lib]
+            };
+            let result = linked(&objects)?;
+            for name in ["textures", "samplers"] {
+                assert_eq!(binding_array_size(&result, name)?, ArraySize::Dynamic);
+            }
+            spirv(&result)?;
+            let options = ProgramOptions {
+                optimize: OptOptions {
+                    level: OptLevel::Performance,
+                    ..OptOptions::default()
+                },
+                ..ProgramOptions::default()
+            };
+            let program = link_spirv(&objects, &options).map_err(|error| error.to_string())?;
+            assert_eq!(program.stages.len(), 1);
+        }
+    }
+    let sized = linked(&[
+        object(
+            ShaderStage::Fragment,
+            &format!(
+                "{DECLARATIONS}vec4 first(vec2 uv);
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+void main() {{ color = first(uv) + texture(sampler2D(textures[4], samplers[0]), uv); }}
+"
+            ),
+        )?,
+        library(&format!(
+            "{DECLARATIONS}vec4 first(vec2 uv) {{ return texture(sampler2D(textures[1], samplers[2]), uv); }}
+"
+        ))?,
+    ])?;
+    assert_eq!(
+        binding_array_size(&sized, "textures")?,
+        ArraySize::Constant(5.try_into()?)
+    );
+    assert_eq!(
+        binding_array_size(&sized, "samplers")?,
+        ArraySize::Constant(3.try_into()?)
     );
     Ok(())
 }
