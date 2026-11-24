@@ -4,8 +4,9 @@ use rglsl_types::ShaderStageMask;
 
 use super::pipeline::LayoutBuilder;
 use super::{
-    DescriptorBinding, InterfaceVariable, LayoutError, PipelineLayout, PushConstantBlock,
-    Reflection, ScalarKind, ScalarType, ScalarValue, SpecializationConstant, WorkgroupDimension,
+    DescriptorBinding, GraphConstant, GraphReflection, GraphTensor, InterfaceVariable, LayoutError,
+    PipelineLayout, PushConstantBlock, Reflection, ScalarKind, ScalarType, ScalarValue,
+    SpecializationConstant, TensorType, WorkgroupDimension,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +308,67 @@ impl Writer {
         self.end_object();
     }
 
+    fn tensor_type(&mut self, tensor: &TensorType) {
+        self.object(Some("type"));
+        self.scalar(tensor.element);
+        self.optional_number("rank", tensor.rank);
+        match tensor.shape {
+            Some(ref shape) => {
+                self.array(Some("shape"));
+                for &dimension in shape {
+                    self.number(None, dimension);
+                }
+                self.end_array();
+            }
+            None => self.null(Some("shape")),
+        }
+        self.end_object();
+    }
+
+    fn graph_tensors(&mut self, key: &str, tensors: &[GraphTensor]) {
+        self.array(Some(key));
+        for tensor in tensors {
+            self.object(None);
+            self.number(Some("set"), tensor.set);
+            self.number(Some("binding"), tensor.binding);
+            self.number(Some("count"), tensor.count);
+            self.optional_string("name", tensor.name.as_deref());
+            self.number(Some("variable_id"), tensor.variable_id);
+            self.tensor_type(&tensor.tensor);
+            self.end_object();
+        }
+        self.end_array();
+    }
+
+    fn graph_constant(&mut self, constant: &GraphConstant) {
+        self.object(None);
+        self.number(Some("id"), constant.id);
+        self.optional_string("name", constant.name.as_deref());
+        self.number(Some("result_id"), constant.result_id);
+        self.tensor_type(&constant.tensor);
+        self.end_object();
+    }
+
+    fn graph(&mut self, reflection: &GraphReflection) {
+        self.object(None);
+        self.array(Some("entry_points"));
+        for entry in &reflection.entry_points {
+            self.object(None);
+            self.string(Some("name"), &entry.name);
+            self.number(Some("graph_id"), entry.graph_id);
+            self.graph_tensors("inputs", &entry.inputs);
+            self.graph_tensors("outputs", &entry.outputs);
+            self.end_object();
+        }
+        self.end_array();
+        self.array(Some("constants"));
+        for constant in &reflection.constants {
+            self.graph_constant(constant);
+        }
+        self.end_array();
+        self.end_object();
+    }
+
     fn finish(mut self) -> String {
         self.text.push('\n');
         self.text
@@ -360,6 +422,14 @@ impl Reflection {
     pub fn to_json(&self) -> String {
         let mut writer = Writer::default();
         writer.reflection(None, self);
+        writer.finish()
+    }
+}
+
+impl GraphReflection {
+    pub fn to_json(&self) -> String {
+        let mut writer = Writer::default();
+        writer.graph(self);
         writer.finish()
     }
 }

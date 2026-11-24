@@ -6,6 +6,7 @@ mod api;
               the safety contract of every function is in rglsl-capi/README.md"
 )]
 mod ffi;
+mod spirv_graph_reflection;
 mod spirv_reflection;
 
 pub use api::{
@@ -29,6 +30,7 @@ pub use api::{
     Stage, TargetGpu,
 };
 pub use ffi::*;
+pub use spirv_graph_reflection::SpirvGraphReflection;
 pub use spirv_reflection::{
     DescriptorType, Interface, PipelineLayout, RGLSL_DESCRIPTOR_HEAP_RESOURCE,
     RGLSL_DESCRIPTOR_HEAP_SAMPLER, RGLSL_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE,

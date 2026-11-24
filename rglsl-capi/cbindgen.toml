@@ -26,6 +26,7 @@ no_includes = true
 "OptLevel" = "rglsl_opt_level"
 "TargetGpu" = "rglsl_target_gpu"
 "SpirvReflection" = "rglsl_spirv_reflection"
+"SpirvGraphReflection" = "rglsl_spirv_graph_reflection"
 "PipelineLayout" = "rglsl_pipeline_layout"
 "DescriptorType" = "rglsl_descriptor_type"
 "ScalarKind" = "rglsl_scalar_kind"

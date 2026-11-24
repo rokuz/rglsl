@@ -10,14 +10,14 @@ use std::ptr;
 
 use common::{Outcome, Owned, TestResult, compile, compile_options, link, string};
 use rglsl_c::{
-    Blob, Object, PipelineLayout, Program, RGLSL_DESCRIPTOR_HEAP_RESOURCE,
+    Blob, Interface, Object, PipelineLayout, Program, RGLSL_DESCRIPTOR_HEAP_RESOURCE,
     RGLSL_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RGLSL_DESCRIPTOR_TYPE_SAMPLER,
     RGLSL_DESCRIPTOR_TYPE_STORAGE_BUFFER, RGLSL_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
     RGLSL_INTERFACE_INPUT, RGLSL_INTERFACE_OUTPUT, RGLSL_RESULT_INVALID_ARGUMENT,
     RGLSL_RESULT_INVALID_SPIRV, RGLSL_RESULT_LINK_FAILED, RGLSL_RESULT_OK, RGLSL_SCALAR_KIND_BOOL,
     RGLSL_SCALAR_KIND_ENCODED_FLOAT, RGLSL_SCALAR_KIND_FLOAT, RGLSL_SCALAR_KIND_INT,
     RGLSL_SCALAR_KIND_UINT, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
-    ResultCode, ScalarKind, SpirvReflection, Stage,
+    ResultCode, ScalarKind, SpirvGraphReflection, SpirvReflection, Stage,
 };
 
 const VERTEX: &CStr = c"#version 450
@@ -739,5 +739,484 @@ fn conflicting_stages_do_not_make_a_layout() -> TestResult {
     let (code, text) = pipeline_layout(&[vertex.as_const(), ptr::null()])?.failed()?;
     assert_eq!(code, RGLSL_RESULT_INVALID_ARGUMENT);
     assert!(text.contains("reflections[1] is NULL"), "{text}");
+    Ok(())
+}
+
+const OP_NAME: u32 = 5;
+const OP_TYPE_INT: u32 = 21;
+const OP_TYPE_FLOAT: u32 = 22;
+const OP_TYPE_ARRAY: u32 = 28;
+const OP_TYPE_POINTER: u32 = 32;
+const OP_CONSTANT: u32 = 43;
+const OP_CONSTANT_COMPOSITE: u32 = 44;
+const OP_VARIABLE: u32 = 59;
+const OP_DECORATE: u32 = 71;
+const OP_TYPE_TENSOR: u32 = 4163;
+const OP_GRAPH_CONSTANT: u32 = 4181;
+const OP_GRAPH_ENTRY_POINT: u32 = 4182;
+const OP_GRAPH: u32 = 4183;
+const OP_GRAPH_END: u32 = 4186;
+const OP_TYPE_GRAPH: u32 = 4190;
+const DECORATION_BINDING: u32 = 33;
+const DECORATION_DESCRIPTOR_SET: u32 = 34;
+const UNIFORM_CONSTANT: u32 = 0;
+
+fn graph_instruction(words: &mut Vec<u32>, opcode: u32, operands: &[u32]) {
+    let count = u32::try_from(operands.len() + 1).unwrap_or(u32::MAX);
+    words.push((count << 16) | opcode);
+    words.extend_from_slice(operands);
+}
+
+fn graph_text(value: &str) -> Vec<u32> {
+    let mut bytes = value.as_bytes().to_vec();
+    bytes.push(0);
+    while !bytes.len().is_multiple_of(4) {
+        bytes.push(0);
+    }
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .rev()
+                .fold(0_u32, |word, &byte| (word << 8) | u32::from(byte))
+        })
+        .collect()
+}
+
+fn graph_module() -> Vec<u32> {
+    let mut words = vec![0x0723_0203, 0x0001_0600, 0, 100, 0];
+    graph_instruction(
+        &mut words,
+        OP_GRAPH_ENTRY_POINT,
+        &[&[40][..], &graph_text("upscale"), &[30, 31]].concat(),
+    );
+    graph_instruction(
+        &mut words,
+        OP_NAME,
+        &[&[30][..], &graph_text("frame")].concat(),
+    );
+    for (variable, binding) in [(30, 3), (31, 0)] {
+        graph_instruction(
+            &mut words,
+            OP_DECORATE,
+            &[variable, DECORATION_DESCRIPTOR_SET, 0],
+        );
+        graph_instruction(
+            &mut words,
+            OP_DECORATE,
+            &[variable, DECORATION_BINDING, binding],
+        );
+    }
+    graph_instruction(&mut words, OP_TYPE_INT, &[10, 8, 1]);
+    graph_instruction(&mut words, OP_TYPE_INT, &[11, 32, 0]);
+    graph_instruction(&mut words, OP_TYPE_FLOAT, &[12, 16]);
+    graph_instruction(&mut words, OP_CONSTANT, &[11, 13, 2]);
+    graph_instruction(&mut words, OP_CONSTANT, &[11, 14, 540]);
+    graph_instruction(&mut words, OP_CONSTANT, &[11, 15, 960]);
+    graph_instruction(&mut words, OP_TYPE_ARRAY, &[16, 11, 13]);
+    graph_instruction(&mut words, OP_CONSTANT_COMPOSITE, &[16, 17, 14, 15]);
+    graph_instruction(&mut words, OP_TYPE_TENSOR, &[20, 12, 13, 17]);
+    graph_instruction(&mut words, OP_TYPE_TENSOR, &[21, 10]);
+    for (pointer, pointee, variable) in [(24, 20, 30), (25, 21, 31)] {
+        graph_instruction(
+            &mut words,
+            OP_TYPE_POINTER,
+            &[pointer, UNIFORM_CONSTANT, pointee],
+        );
+        graph_instruction(
+            &mut words,
+            OP_VARIABLE,
+            &[pointer, variable, UNIFORM_CONSTANT],
+        );
+    }
+    graph_instruction(&mut words, OP_GRAPH_CONSTANT, &[20, 35, 7]);
+    graph_instruction(&mut words, OP_TYPE_GRAPH, &[39, 1, 20, 21]);
+    graph_instruction(&mut words, OP_GRAPH, &[39, 40]);
+    graph_instruction(&mut words, OP_GRAPH_END, &[]);
+    words
+}
+
+fn reflect_graph(words: &[u32]) -> TestResult<Outcome<SpirvGraphReflection>> {
+    let mut reflection = ptr::null_mut();
+    let mut diagnostics = ptr::null_mut();
+    let code = unsafe {
+        rglsl_c::rglsl_spirv_reflect_graph(
+            words.as_ptr(),
+            words.len(),
+            &raw mut reflection,
+            &raw mut diagnostics,
+        )
+    };
+    Outcome::new(
+        code,
+        reflection,
+        rglsl_c::rglsl_spirv_graph_reflection_destroy,
+        diagnostics,
+    )
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Tensor {
+    set: u32,
+    binding: u32,
+    count: u32,
+    variable_id: u32,
+}
+
+fn graph_tensor(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+    index: usize,
+) -> (ResultCode, Tensor) {
+    let mut tensor = Tensor::default();
+    let code = unsafe {
+        rglsl_c::rglsl_spirv_graph_reflection_tensor(
+            reflection,
+            entry,
+            direction,
+            index,
+            &raw mut tensor.set,
+            &raw mut tensor.binding,
+            &raw mut tensor.count,
+            &raw mut tensor.variable_id,
+        )
+    };
+    (code, tensor)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct GraphTensorType {
+    kind: ScalarKind,
+    encoding: u32,
+    width: u32,
+    rank: Option<u32>,
+    shape: Option<Vec<u32>>,
+}
+
+struct TypeSlots {
+    kind: ScalarKind,
+    encoding: u32,
+    width: u32,
+    ranked: bool,
+    rank: u32,
+    shaped: bool,
+    shape: *const u32,
+    shape_rank: usize,
+}
+
+impl TypeSlots {
+    const fn new() -> Self {
+        Self {
+            kind: RGLSL_SCALAR_KIND_INT,
+            encoding: 9,
+            width: 9,
+            ranked: true,
+            rank: 9,
+            shaped: true,
+            shape: ptr::dangling(),
+            shape_rank: 9,
+        }
+    }
+
+    fn finish(self) -> GraphTensorType {
+        GraphTensorType {
+            kind: self.kind,
+            encoding: self.encoding,
+            width: self.width,
+            rank: self.ranked.then_some(self.rank),
+            shape: self.shaped.then(|| {
+                if self.shape_rank == 0 {
+                    Vec::new()
+                } else {
+                    unsafe { std::slice::from_raw_parts(self.shape, self.shape_rank) }.to_vec()
+                }
+            }),
+        }
+    }
+}
+
+fn tensor_type(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+    index: usize,
+) -> (ResultCode, GraphTensorType) {
+    let mut slots = TypeSlots::new();
+    let code = unsafe {
+        rglsl_c::rglsl_spirv_graph_reflection_tensor_type(
+            reflection,
+            entry,
+            direction,
+            index,
+            &raw mut slots.kind,
+            &raw mut slots.encoding,
+            &raw mut slots.width,
+            &raw mut slots.ranked,
+            &raw mut slots.rank,
+            &raw mut slots.shaped,
+            &raw mut slots.shape,
+            &raw mut slots.shape_rank,
+        )
+    };
+    (code, slots.finish())
+}
+
+fn constant_type(
+    reflection: *const SpirvGraphReflection,
+    index: usize,
+) -> (ResultCode, GraphTensorType) {
+    let mut slots = TypeSlots::new();
+    let code = unsafe {
+        rglsl_c::rglsl_spirv_graph_reflection_constant_type(
+            reflection,
+            index,
+            &raw mut slots.kind,
+            &raw mut slots.encoding,
+            &raw mut slots.width,
+            &raw mut slots.ranked,
+            &raw mut slots.rank,
+            &raw mut slots.shaped,
+            &raw mut slots.shape,
+            &raw mut slots.shape_rank,
+        )
+    };
+    (code, slots.finish())
+}
+
+fn float16(rank: Option<u32>, shape: Option<Vec<u32>>) -> GraphTensorType {
+    GraphTensorType {
+        kind: RGLSL_SCALAR_KIND_FLOAT,
+        encoding: 0,
+        width: 16,
+        rank,
+        shape,
+    }
+}
+
+#[test]
+fn graph_entry_points_tensors_and_constants() -> TestResult {
+    let words = graph_module();
+    let owned = reflect_graph(&words)?.done()?;
+    let reflection = owned.as_const();
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_entry_point_count(reflection) },
+        1
+    );
+    assert_eq!(
+        string(unsafe { rglsl_c::rglsl_spirv_graph_reflection_entry_point_name(reflection, 0) })?,
+        "upscale"
+    );
+    let mut graph_id = 0;
+    assert_eq!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_entry_point_graph_id(
+                reflection,
+                0,
+                &raw mut graph_id,
+            )
+        },
+        RGLSL_RESULT_OK
+    );
+    assert_eq!(graph_id, 40);
+    let count = |direction| unsafe {
+        rglsl_c::rglsl_spirv_graph_reflection_tensor_count(reflection, 0, direction)
+    };
+    assert_eq!(
+        (count(RGLSL_INTERFACE_INPUT), count(RGLSL_INTERFACE_OUTPUT)),
+        (1, 1)
+    );
+    assert_eq!(
+        graph_tensor(reflection, 0, RGLSL_INTERFACE_INPUT, 0),
+        (
+            RGLSL_RESULT_OK,
+            Tensor {
+                set: 0,
+                binding: 3,
+                count: 1,
+                variable_id: 30
+            }
+        )
+    );
+    assert_eq!(
+        graph_tensor(reflection, 0, RGLSL_INTERFACE_OUTPUT, 0),
+        (
+            RGLSL_RESULT_OK,
+            Tensor {
+                set: 0,
+                binding: 0,
+                count: 1,
+                variable_id: 31
+            }
+        )
+    );
+    assert_eq!(
+        string(unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_tensor_name(
+                reflection,
+                0,
+                RGLSL_INTERFACE_INPUT,
+                0,
+            )
+        })?,
+        "frame"
+    );
+    assert!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_tensor_name(
+                reflection,
+                0,
+                RGLSL_INTERFACE_OUTPUT,
+                0,
+            )
+        }
+        .is_null()
+    );
+    assert_eq!(
+        tensor_type(reflection, 0, RGLSL_INTERFACE_INPUT, 0),
+        (RGLSL_RESULT_OK, float16(Some(2), Some(vec![540, 960])))
+    );
+    assert_eq!(
+        tensor_type(reflection, 0, RGLSL_INTERFACE_OUTPUT, 0),
+        (
+            RGLSL_RESULT_OK,
+            GraphTensorType {
+                kind: RGLSL_SCALAR_KIND_INT,
+                encoding: 0,
+                width: 8,
+                rank: None,
+                shape: None,
+            }
+        )
+    );
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_constant_count(reflection) },
+        1
+    );
+    let (mut id, mut result_id) = (0, 0);
+    assert_eq!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_constant(
+                reflection,
+                0,
+                &raw mut id,
+                &raw mut result_id,
+            )
+        },
+        RGLSL_RESULT_OK
+    );
+    assert_eq!((id, result_id), (7, 35));
+    assert!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_constant_name(reflection, 0) }.is_null()
+    );
+    assert_eq!(
+        constant_type(reflection, 0),
+        (RGLSL_RESULT_OK, float16(Some(2), Some(vec![540, 960])))
+    );
+    let mut json = ptr::null_mut();
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_json(reflection, &raw mut json) },
+        RGLSL_RESULT_OK
+    );
+    let json = Owned::new(json, rglsl_c::rglsl_blob_destroy)?;
+    let json = string(unsafe { rglsl_c::rglsl_blob_text(json.as_const()) })?;
+    for expected in [
+        "\"name\": \"upscale\"",
+        "\"binding\": 3",
+        "\"name\": \"frame\"",
+        "\"rank\": null",
+        "\"id\": 7",
+    ] {
+        assert!(json.contains(expected), "{expected}\n{json}");
+    }
+    Ok(())
+}
+
+#[test]
+fn out_of_range_and_null_arguments() -> TestResult {
+    let words = graph_module();
+    let owned = reflect_graph(&words)?.done()?;
+    let reflection = owned.as_const();
+    let empty = (RGLSL_RESULT_INVALID_ARGUMENT, Tensor::default());
+    assert_eq!(graph_tensor(reflection, 0, RGLSL_INTERFACE_INPUT, 1), empty);
+    assert_eq!(graph_tensor(reflection, 1, RGLSL_INTERFACE_INPUT, 0), empty);
+    assert_eq!(
+        graph_tensor(reflection, 0, Interface::from_raw(7), 0),
+        empty
+    );
+    assert_eq!(
+        graph_tensor(ptr::null(), 0, RGLSL_INTERFACE_INPUT, 0),
+        empty
+    );
+    let untyped = (RGLSL_RESULT_INVALID_ARGUMENT, GraphTensorType::default());
+    assert_eq!(
+        tensor_type(reflection, 0, RGLSL_INTERFACE_OUTPUT, 1),
+        untyped
+    );
+    assert_eq!(constant_type(reflection, 1), untyped);
+    assert_eq!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_tensor_count(
+                reflection,
+                0,
+                Interface::from_raw(7),
+            )
+        },
+        0
+    );
+    assert!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_entry_point_name(reflection, 1) }.is_null()
+    );
+    assert_eq!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_entry_point_graph_id(
+                reflection,
+                0,
+                ptr::null_mut(),
+            )
+        },
+        RGLSL_RESULT_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe {
+            rglsl_c::rglsl_spirv_graph_reflection_constant(
+                reflection,
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        },
+        RGLSL_RESULT_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_entry_point_count(ptr::null()) },
+        0
+    );
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_constant_count(ptr::null()) },
+        0
+    );
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_spirv_graph_reflection_json(reflection, ptr::null_mut()) },
+        RGLSL_RESULT_INVALID_ARGUMENT
+    );
+    unsafe { rglsl_c::rglsl_spirv_graph_reflection_destroy(ptr::null_mut()) };
+    Ok(())
+}
+
+#[test]
+fn modules_without_a_graph_are_invalid() -> TestResult {
+    for words in [&[][..], &[0x0723_0203, 0x0001_0600, 0, 1, 0][..]] {
+        let (code, text) = reflect_graph(words)?.failed()?;
+        assert_eq!(code, RGLSL_RESULT_INVALID_SPIRV);
+        assert!(text.contains("invalid SPIR-V"), "{text}");
+    }
+    let mut reflection = ptr::null_mut();
+    let code = unsafe {
+        rglsl_c::rglsl_spirv_reflect_graph(ptr::null(), 4, &raw mut reflection, ptr::null_mut())
+    };
+    assert_eq!(code, RGLSL_RESULT_INVALID_ARGUMENT);
+    assert!(reflection.is_null());
     Ok(())
 }

@@ -43,7 +43,8 @@ for binary in &program.stages {
 types and counts, push constants, inputs and outputs, specialization constants and the workgroup
 size; `spirv_reflection::PipelineLayout::new` merges the stages into descriptor set layouts and
 push-constant ranges. `spirv_reflection::reflect_graph(words)` reflects a data graph module
-(`SPV_ARM_graph`): graph entry points with their input and output tensors, and graph constants.
+(`SPV_ARM_graph`): graph entry points with their input and output tensors, and graph constants;
+the C API has it as `rglsl_spirv_reflect_graph`.
 
 `rglsl-dis` turns SPIR-V into text: glslang's `-H` disassembly, SPIRV-Tools' `spirv-dis` form and
 hexadecimal text. [samples](https://github.com/rokuz/rglsl/tree/v@VERSION@/samples) has complete

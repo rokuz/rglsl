@@ -509,6 +509,86 @@ fn graph_interface_in_declaration_order() -> Result<(), ReflectError> {
 }
 
 #[test]
+fn graph_json() -> Result<(), ReflectError> {
+    let json = reflect_graph(&graph_module("g", &[31, 32], 1))?.to_json();
+    let expected = r#"{
+  "entry_points": [
+    {
+      "name": "g",
+      "graph_id": 40,
+      "inputs": [
+        {
+          "set": 0,
+          "binding": 0,
+          "count": 2,
+          "name": "frame",
+          "variable_id": 31,
+          "type": {
+            "scalar": "float",
+            "width": 16,
+            "rank": 4,
+            "shape": [
+              1,
+              540,
+              960,
+              4
+            ]
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "set": 0,
+          "binding": 7,
+          "count": 1,
+          "name": null,
+          "variable_id": 32,
+          "type": {
+            "scalar": "float",
+            "width": 16,
+            "rank": null,
+            "shape": null
+          }
+        }
+      ]
+    }
+  ],
+  "constants": [
+    {
+      "id": 3,
+      "name": null,
+      "result_id": 36,
+      "type": {
+        "scalar": "int",
+        "width": 8,
+        "rank": 4,
+        "shape": null
+      }
+    },
+    {
+      "id": 9,
+      "name": null,
+      "result_id": 35,
+      "type": {
+        "scalar": "float",
+        "width": 16,
+        "rank": 4,
+        "shape": [
+          1,
+          540,
+          960,
+          4
+        ]
+      }
+    }
+  ]
+}
+"#;
+    assert_eq!(json, expected);
+    Ok(())
+}
+
+#[test]
 fn graph_errors() {
     assert_eq!(
         reflect_graph(&compute()),

@@ -7,6 +7,7 @@ use crate::api::{
     Limits, Location, Object, OptLevel, Program, ProgramOptions, ResultCode, Severity, Stage,
     TargetGpu,
 };
+use crate::spirv_graph_reflection::{self, SpirvGraphReflection, TensorSlot, TensorTypeSlot};
 use crate::spirv_reflection::{
     self, BindingBlock, DescriptorType, Interface, InterfaceFormat, InterfaceSlot,
     LayoutBindingSlot, LocalSize, PipelineLayout, PushConstant, PushConstantBank, RangeSlot,
@@ -1176,6 +1177,190 @@ pub unsafe extern "C" fn rglsl_program_spirv_reflection_json(
     let json = unsafe { json.as_mut() };
     let diagnostics = unsafe { diagnostics.as_mut() };
     spirv_reflection::program_spirv_reflection_json(program, json, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_reflect_graph(
+    words: *const u32,
+    word_count: usize,
+    reflection: *mut *mut SpirvGraphReflection,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let words = unsafe { word_slice(words, word_count) };
+    let reflection = unsafe { reflection.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    spirv_graph_reflection::reflect_graph(words, reflection, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_destroy(
+    reflection: *mut SpirvGraphReflection,
+) {
+    api::destroy(unsafe { take(reflection) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_entry_point_count(
+    reflection: *const SpirvGraphReflection,
+) -> usize {
+    spirv_graph_reflection::entry_point_count(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_entry_point_name(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+) -> *const c_char {
+    spirv_graph_reflection::entry_point_name(unsafe { reflection.as_ref() }, entry)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_entry_point_graph_id(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    graph_id: *mut u32,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let graph_id = unsafe { graph_id.as_mut() };
+    spirv_graph_reflection::entry_point_graph_id(reflection, entry, graph_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_tensor_count(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+) -> usize {
+    spirv_graph_reflection::tensor_count(unsafe { reflection.as_ref() }, entry, direction)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_tensor(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+    index: usize,
+    set: *mut u32,
+    binding: *mut u32,
+    count: *mut u32,
+    variable_id: *mut u32,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let output = TensorSlot {
+        set: unsafe { set.as_mut() },
+        binding: unsafe { binding.as_mut() },
+        count: unsafe { count.as_mut() },
+        variable_id: unsafe { variable_id.as_mut() },
+    };
+    spirv_graph_reflection::tensor(reflection, entry, direction, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_tensor_name(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+    index: usize,
+) -> *const c_char {
+    spirv_graph_reflection::tensor_name(unsafe { reflection.as_ref() }, entry, direction, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_tensor_type(
+    reflection: *const SpirvGraphReflection,
+    entry: usize,
+    direction: Interface,
+    index: usize,
+    kind: *mut ScalarKind,
+    encoding: *mut u32,
+    width: *mut u32,
+    ranked: *mut bool,
+    rank: *mut u32,
+    shaped: *mut bool,
+    shape: *mut *const u32,
+    shape_rank: *mut usize,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let output = TensorTypeSlot {
+        scalar: Scalar {
+            kind: unsafe { kind.as_mut() },
+            encoding: unsafe { encoding.as_mut() },
+            width: unsafe { width.as_mut() },
+        },
+        ranked: unsafe { ranked.as_mut() },
+        rank: unsafe { rank.as_mut() },
+        shaped: unsafe { shaped.as_mut() },
+        shape: unsafe { shape.as_mut() },
+        shape_rank: unsafe { shape_rank.as_mut() },
+    };
+    spirv_graph_reflection::tensor_type(reflection, entry, direction, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_constant_count(
+    reflection: *const SpirvGraphReflection,
+) -> usize {
+    spirv_graph_reflection::constant_count(unsafe { reflection.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_constant(
+    reflection: *const SpirvGraphReflection,
+    index: usize,
+    id: *mut u32,
+    result_id: *mut u32,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let id = unsafe { id.as_mut() };
+    let result_id = unsafe { result_id.as_mut() };
+    spirv_graph_reflection::constant(reflection, index, id, result_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_constant_name(
+    reflection: *const SpirvGraphReflection,
+    index: usize,
+) -> *const c_char {
+    spirv_graph_reflection::constant_name(unsafe { reflection.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_constant_type(
+    reflection: *const SpirvGraphReflection,
+    index: usize,
+    kind: *mut ScalarKind,
+    encoding: *mut u32,
+    width: *mut u32,
+    ranked: *mut bool,
+    rank: *mut u32,
+    shaped: *mut bool,
+    shape: *mut *const u32,
+    shape_rank: *mut usize,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let output = TensorTypeSlot {
+        scalar: Scalar {
+            kind: unsafe { kind.as_mut() },
+            encoding: unsafe { encoding.as_mut() },
+            width: unsafe { width.as_mut() },
+        },
+        ranked: unsafe { ranked.as_mut() },
+        rank: unsafe { rank.as_mut() },
+        shaped: unsafe { shaped.as_mut() },
+        shape: unsafe { shape.as_mut() },
+        shape_rank: unsafe { shape_rank.as_mut() },
+    };
+    spirv_graph_reflection::constant_type(reflection, index, output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_spirv_graph_reflection_json(
+    reflection: *const SpirvGraphReflection,
+    json: *mut *mut Blob,
+) -> ResultCode {
+    let reflection = unsafe { reflection.as_ref() };
+    let json = unsafe { json.as_mut() };
+    spirv_graph_reflection::json(reflection, json)
 }
 
 #[unsafe(no_mangle)]

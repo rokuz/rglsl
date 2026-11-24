@@ -51,6 +51,8 @@ typedef struct rglsl_program rglsl_program;
 
 typedef struct rglsl_program_options rglsl_program_options;
 
+typedef struct rglsl_spirv_graph_reflection rglsl_spirv_graph_reflection;
+
 typedef struct rglsl_spirv_reflection rglsl_spirv_reflection;
 
 typedef uint32_t rglsl_result;
@@ -555,6 +557,77 @@ rglsl_result rglsl_spirv_reflection_json(const rglsl_spirv_reflection *reflectio
 rglsl_result rglsl_program_spirv_reflection_json(const rglsl_program *program,
                                                  rglsl_blob **json,
                                                  rglsl_diagnostics **diagnostics);
+
+rglsl_result rglsl_spirv_reflect_graph(const uint32_t *words,
+                                       size_t word_count,
+                                       rglsl_spirv_graph_reflection **reflection,
+                                       rglsl_diagnostics **diagnostics);
+
+void rglsl_spirv_graph_reflection_destroy(rglsl_spirv_graph_reflection *reflection);
+
+size_t rglsl_spirv_graph_reflection_entry_point_count(const rglsl_spirv_graph_reflection *reflection);
+
+const char *rglsl_spirv_graph_reflection_entry_point_name(const rglsl_spirv_graph_reflection *reflection,
+                                                          size_t entry);
+
+rglsl_result rglsl_spirv_graph_reflection_entry_point_graph_id(const rglsl_spirv_graph_reflection *reflection,
+                                                               size_t entry,
+                                                               uint32_t *graph_id);
+
+size_t rglsl_spirv_graph_reflection_tensor_count(const rglsl_spirv_graph_reflection *reflection,
+                                                 size_t entry,
+                                                 rglsl_interface direction);
+
+rglsl_result rglsl_spirv_graph_reflection_tensor(const rglsl_spirv_graph_reflection *reflection,
+                                                 size_t entry,
+                                                 rglsl_interface direction,
+                                                 size_t index,
+                                                 uint32_t *set,
+                                                 uint32_t *binding,
+                                                 uint32_t *count,
+                                                 uint32_t *variable_id);
+
+const char *rglsl_spirv_graph_reflection_tensor_name(const rglsl_spirv_graph_reflection *reflection,
+                                                     size_t entry,
+                                                     rglsl_interface direction,
+                                                     size_t index);
+
+rglsl_result rglsl_spirv_graph_reflection_tensor_type(const rglsl_spirv_graph_reflection *reflection,
+                                                      size_t entry,
+                                                      rglsl_interface direction,
+                                                      size_t index,
+                                                      rglsl_scalar_kind *kind,
+                                                      uint32_t *encoding,
+                                                      uint32_t *width,
+                                                      bool *ranked,
+                                                      uint32_t *rank,
+                                                      bool *shaped,
+                                                      const uint32_t **shape,
+                                                      size_t *shape_rank);
+
+size_t rglsl_spirv_graph_reflection_constant_count(const rglsl_spirv_graph_reflection *reflection);
+
+rglsl_result rglsl_spirv_graph_reflection_constant(const rglsl_spirv_graph_reflection *reflection,
+                                                   size_t index,
+                                                   uint32_t *id,
+                                                   uint32_t *result_id);
+
+const char *rglsl_spirv_graph_reflection_constant_name(const rglsl_spirv_graph_reflection *reflection,
+                                                       size_t index);
+
+rglsl_result rglsl_spirv_graph_reflection_constant_type(const rglsl_spirv_graph_reflection *reflection,
+                                                        size_t index,
+                                                        rglsl_scalar_kind *kind,
+                                                        uint32_t *encoding,
+                                                        uint32_t *width,
+                                                        bool *ranked,
+                                                        uint32_t *rank,
+                                                        bool *shaped,
+                                                        const uint32_t **shape,
+                                                        size_t *shape_rank);
+
+rglsl_result rglsl_spirv_graph_reflection_json(const rglsl_spirv_graph_reflection *reflection,
+                                               rglsl_blob **json);
 
 rglsl_result rglsl_pipeline_layout_create(const rglsl_spirv_reflection *const *reflections,
                                           size_t count,

@@ -79,6 +79,14 @@ impl Interface {
     pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
+
+    pub(crate) const fn is_output(self) -> Option<bool> {
+        match self {
+            RGLSL_INTERFACE_INPUT => Some(false),
+            RGLSL_INTERFACE_OUTPUT => Some(true),
+            _ => None,
+        }
+    }
 }
 
 pub const RGLSL_DESCRIPTOR_HEAP_RESOURCE: u32 = 1;
@@ -95,7 +103,7 @@ pub struct SpirvReflection {
     specialization_names: Vec<Option<CString>>,
 }
 
-fn names<'a>(names: impl Iterator<Item = Option<&'a str>>) -> Vec<Option<CString>> {
+pub(crate) fn names<'a>(names: impl Iterator<Item = Option<&'a str>>) -> Vec<Option<CString>> {
     names.map(|name| name.map(c_string)).collect()
 }
 
@@ -176,14 +184,14 @@ impl PipelineLayout {
     }
 }
 
-fn name(names: &[Option<CString>], index: usize) -> *const c_char {
+pub(crate) fn name(names: &[Option<CString>], index: usize) -> *const c_char {
     names
         .get(index)
         .and_then(Option::as_deref)
         .map_or(ptr::null(), CStr::as_ptr)
 }
 
-fn invalid_spirv(error: &ReflectError) -> Failure {
+pub(crate) fn invalid_spirv(error: &ReflectError) -> Failure {
     Failure::from_message(
         RGLSL_RESULT_INVALID_SPIRV,
         format!("invalid SPIR-V: {error}"),
@@ -538,14 +546,14 @@ pub(crate) struct Scalar<'a> {
     pub(crate) width: Option<&'a mut u32>,
 }
 
-struct ScalarSlot<'a> {
+pub(crate) struct ScalarSlot<'a> {
     kind: &'a mut ScalarKind,
     encoding: &'a mut u32,
     width: &'a mut u32,
 }
 
 impl<'a> Scalar<'a> {
-    fn required(self) -> Option<ScalarSlot<'a>> {
+    pub(crate) fn required(self) -> Option<ScalarSlot<'a>> {
         let slot = ScalarSlot {
             kind: self.kind?,
             encoding: self.encoding?,
@@ -559,7 +567,7 @@ impl<'a> Scalar<'a> {
 }
 
 impl ScalarSlot<'_> {
-    fn write(self, scalar: ScalarType) {
+    pub(crate) fn write(self, scalar: ScalarType) {
         (*self.kind, *self.encoding) = ScalarKind::of(scalar.kind);
         *self.width = scalar.width;
     }

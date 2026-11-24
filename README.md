@@ -108,7 +108,7 @@ malformed words. (`-q`'s glslang-style reflection of the GLSL source is a differ
 module (`SPV_ARM_graph`, as in a `.vgf` file), which has graph entry points instead of a shader
 entry point: for every graph entry point its name and its input and output tensors in the order
 of the graph's interface (descriptor set, binding, count, element type, rank and shape), and the
-graph constants with their ids and tensor types.
+graph constants with their ids and tensor types; `GraphReflection::to_json` writes it as JSON.
 
 ```rust
 use rglsl_link::spirv_reflection::{PipelineLayout, vulkan_stage_flags};
