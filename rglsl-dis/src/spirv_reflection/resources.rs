@@ -144,7 +144,7 @@ fn descriptor_type(
         (StorageClass::UniformConstant, &Type::AccelerationStructure) => {
             Some(DescriptorType::AccelerationStructure)
         }
-        (StorageClass::UniformConstant, &Type::Tensor) => Some(DescriptorType::Tensor),
+        (StorageClass::UniformConstant, &Type::Tensor { .. }) => Some(DescriptorType::Tensor),
         _ => None,
     })
 }

@@ -136,7 +136,8 @@ impl<'m> Sizes<'m> {
             | Type::SampledImage { .. }
             | Type::Pointer { .. }
             | Type::AccelerationStructure
-            | Type::Tensor
+            | Type::Tensor { .. }
+            | Type::Graph { .. }
             | Type::Other => Err(ReflectError::UnsizedType(id)),
         }
     }

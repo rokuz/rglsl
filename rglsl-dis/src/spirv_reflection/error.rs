@@ -32,6 +32,10 @@ pub enum ReflectError {
     SizeOverflow(u32),
     LocationOverflow(u32),
     DescriptorCountOverflow { variable: u32 },
+    NoGraphEntryPoint,
+    GraphEntryPoint { graph: u32 },
+    GraphInterface { variable: u32 },
+    TensorType(u32),
 }
 
 impl fmt::Display for ReflectError {
@@ -110,6 +114,19 @@ impl fmt::Display for ReflectError {
             Self::DescriptorCountOverflow { variable } => write!(
                 f,
                 "the descriptor count of variable {variable} does not fit in 32 bits"
+            ),
+            Self::NoGraphEntryPoint => f.write_str("the module has no graph entry point"),
+            Self::GraphEntryPoint { graph } => write!(
+                f,
+                "graph entry point {graph} is not a graph with an interface variable for every input"
+            ),
+            Self::GraphInterface { variable } => write!(
+                f,
+                "graph interface variable {variable} is not a tensor with a descriptor set and a binding"
+            ),
+            Self::TensorType(id) => write!(
+                f,
+                "tensor type {id} does not have a scalar element type, a constant rank and a constant shape"
             ),
         }
     }

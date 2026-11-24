@@ -78,7 +78,14 @@ pub(super) enum Type {
         pointee: Option<u32>,
     },
     AccelerationStructure,
-    Tensor,
+    Tensor {
+        element: u32,
+        rank: Option<u32>,
+        shape: Option<u32>,
+    },
+    Graph {
+        inputs: u32,
+    },
     Other,
 }
 
@@ -192,6 +199,20 @@ pub(super) struct EntryPoint {
     pub(super) name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct GraphEntry {
+    pub(super) graph: u32,
+    pub(super) name: String,
+    pub(super) interface: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GraphConstantDeclaration {
+    pub(super) ty: u32,
+    pub(super) id: u32,
+    pub(super) constant_id: u32,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Module {
     pub(super) types: BTreeMap<u32, Type>,
@@ -202,6 +223,9 @@ pub(super) struct Module {
     member_names: BTreeMap<(u32, u32), String>,
     pub(super) variables: Vec<Variable>,
     entry_points: Vec<EntryPoint>,
+    pub(super) graph_entries: Vec<GraphEntry>,
+    pub(super) graph_constants: Vec<GraphConstantDeclaration>,
+    graphs: BTreeMap<u32, u32>,
     local_sizes: Vec<(u32, [u32; 3])>,
     local_size_ids: Vec<(u32, [u32; 3])>,
     groups: Vec<(u32, u32)>,
@@ -398,6 +422,30 @@ impl Module {
                     });
                 }
             }
+            Op::GraphEntryPointARM => {
+                let graph = instruction.operand(0)?;
+                let name = instruction.string(1)?;
+                let operands = instruction.operands_from(1);
+                let name_words = operands
+                    .iter()
+                    .position(|word| word.to_le_bytes().contains(&0))
+                    .map_or(operands.len(), |last| last + 1);
+                let interface = operands.get(name_words..).unwrap_or_default().to_vec();
+                self.graph_entries.push(GraphEntry {
+                    graph,
+                    name,
+                    interface,
+                });
+            }
+            Op::GraphARM => {
+                self.graphs
+                    .insert(instruction.operand(1)?, instruction.operand(0)?);
+            }
+            Op::GraphConstantARM => self.graph_constants.push(GraphConstantDeclaration {
+                ty: instruction.operand(0)?,
+                id: instruction.operand(1)?,
+                constant_id: instruction.operand(2)?,
+            }),
             _ if op.is_type() => self.type_instruction(op, instruction)?,
             _ if op.is_constant() => self.constant_instruction(op, instruction)?,
             _ => {}
@@ -464,7 +512,14 @@ impl Module {
                 pointee: None,
             },
             Op::TypeAccelerationStructureKHR => Type::AccelerationStructure,
-            Op::TypeTensorARM => Type::Tensor,
+            Op::TypeTensorARM => Type::Tensor {
+                element: instruction.operand(1)?,
+                rank: instruction.operand(2).ok(),
+                shape: instruction.operand(3).ok(),
+            },
+            Op::TypeGraphARM => Type::Graph {
+                inputs: instruction.operand(1)?,
+            },
             _ => Type::Other,
         };
         if self.types.insert(id, ty).is_some() {
@@ -565,6 +620,24 @@ impl Module {
             .get(&(id, member))
             .filter(|name| !name.is_empty())
             .cloned()
+    }
+
+    pub(super) fn graph_inputs(&self, graph: u32) -> Option<u32> {
+        match self.types.get(self.graphs.get(&graph)?) {
+            Some(&Type::Graph { inputs }) => Some(inputs),
+            _ => None,
+        }
+    }
+
+    pub(super) fn constant_u32(&self, id: u32) -> Option<u32> {
+        self.integer(id).and_then(|value| u32::try_from(value).ok())
+    }
+
+    pub(super) fn composite(&self, id: u32) -> Option<&[u32]> {
+        match self.constants.get(&id) {
+            Some(Constant::Composite { constituents }) => Some(constituents),
+            _ => None,
+        }
     }
 
     fn integer(&self, id: u32) -> Option<u64> {

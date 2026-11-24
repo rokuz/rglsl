@@ -4,7 +4,7 @@ use rglsl_types::ShaderStage;
 
 use super::{
     DescriptorType, ReflectError, Reflection, ScalarKind, ScalarType, ScalarValue,
-    SpecializationConstant, WorkgroupDimension, reflect,
+    SpecializationConstant, TensorType, WorkgroupDimension, reflect, reflect_graph,
 };
 
 const MAGIC: u32 = 0x0723_0203;
@@ -379,5 +379,175 @@ fn invalid_image_operands() {
             image: 11,
             sampled: 3
         })
+    );
+}
+
+fn graph_module(name: &str, interface: &[u32], inputs: u32) -> Vec<u32> {
+    let mut words = header();
+    let mut entry = vec![40];
+    entry.extend(string(name));
+    entry.extend_from_slice(interface);
+    instruction(&mut words, Op::GraphEntryPointARM, &entry);
+    instruction(
+        &mut words,
+        Op::Name,
+        &[&[31][..], &string("frame")].concat(),
+    );
+    for (variable, binding) in [(30, 4), (31, 0), (32, 7)] {
+        instruction(
+            &mut words,
+            Op::Decorate,
+            &[variable, Decoration::DescriptorSet as u32, 0],
+        );
+        instruction(
+            &mut words,
+            Op::Decorate,
+            &[variable, Decoration::Binding as u32, binding],
+        );
+    }
+    instruction(&mut words, Op::TypeInt, &[10, 8, 1]);
+    instruction(&mut words, Op::TypeInt, &[11, 32, 0]);
+    instruction(&mut words, Op::TypeFloat, &[12, 16]);
+    instruction(&mut words, Op::Constant, &[11, 13, 4]);
+    instruction(&mut words, Op::Constant, &[11, 14, 1]);
+    instruction(&mut words, Op::Constant, &[11, 15, 540]);
+    instruction(&mut words, Op::Constant, &[11, 16, 960]);
+    instruction(&mut words, Op::Constant, &[11, 17, 2]);
+    instruction(&mut words, Op::TypeArray, &[18, 11, 13]);
+    instruction(&mut words, Op::ConstantComposite, &[18, 19, 14, 15, 16, 13]);
+    instruction(&mut words, Op::TypeTensorARM, &[20, 10, 13]);
+    instruction(&mut words, Op::TypeTensorARM, &[21, 12, 13, 19]);
+    instruction(&mut words, Op::TypeTensorARM, &[22, 12]);
+    instruction(&mut words, Op::TypeArray, &[23, 21, 17]);
+    for (pointer, pointee) in [(24, 20), (25, 23), (26, 22)] {
+        instruction(
+            &mut words,
+            Op::TypePointer,
+            &[pointer, StorageClass::UniformConstant as u32, pointee],
+        );
+    }
+    for (pointer, variable) in [(24, 30), (25, 31), (26, 32)] {
+        instruction(
+            &mut words,
+            Op::Variable,
+            &[pointer, variable, StorageClass::UniformConstant as u32],
+        );
+    }
+    instruction(&mut words, Op::GraphConstantARM, &[21, 35, 9]);
+    instruction(&mut words, Op::GraphConstantARM, &[20, 36, 3]);
+    instruction(&mut words, Op::TypeGraphARM, &[39, inputs, 20, 23, 22]);
+    instruction(&mut words, Op::GraphARM, &[39, 40]);
+    instruction(&mut words, Op::GraphEndARM, &[]);
+    words
+}
+
+#[test]
+fn graph_interface_in_declaration_order() -> Result<(), ReflectError> {
+    for name in ["g", "main", "graph_partition_0"] {
+        let words = graph_module(name, &[30, 31, 32], 2);
+        assert_eq!(reflect(&words), Err(ReflectError::NoEntryPoint));
+        let reflection = reflect_graph(&words)?;
+        let [entry] = reflection.entry_points.as_slice() else {
+            panic!("{:?}", reflection.entry_points);
+        };
+        assert_eq!(reflection.entry_point(name), Some(entry));
+        assert_eq!((entry.name.as_str(), entry.graph_id), (name, 40));
+        let bindings = |tensors: &[super::GraphTensor]| {
+            tensors
+                .iter()
+                .map(|tensor| (tensor.set, tensor.binding, tensor.count, tensor.variable_id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bindings(&entry.inputs), [(0, 4, 1, 30), (0, 0, 2, 31)]);
+        assert_eq!(bindings(&entry.outputs), [(0, 7, 1, 32)]);
+        let int8 = ScalarType {
+            kind: ScalarKind::Int,
+            width: 8,
+        };
+        let float16 = ScalarType {
+            kind: ScalarKind::Float,
+            width: 16,
+        };
+        let types = entry
+            .inputs
+            .iter()
+            .chain(&entry.outputs)
+            .map(|tensor| {
+                let TensorType {
+                    element,
+                    rank,
+                    ref shape,
+                    ..
+                } = tensor.tensor;
+                (element, rank, shape.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            types,
+            [
+                (int8, Some(4), None),
+                (float16, Some(4), Some(vec![1, 540, 960, 4])),
+                (float16, None, None),
+            ]
+        );
+        assert_eq!(
+            entry
+                .inputs
+                .iter()
+                .map(|tensor| tensor.name.as_deref())
+                .collect::<Vec<_>>(),
+            [None, Some("frame")]
+        );
+        let constants = reflection
+            .constants
+            .iter()
+            .map(|constant| (constant.id, constant.result_id, constant.tensor.element))
+            .collect::<Vec<_>>();
+        assert_eq!(constants, [(3, 36, int8), (9, 35, float16)]);
+    }
+    Ok(())
+}
+
+#[test]
+fn graph_errors() {
+    assert_eq!(
+        reflect_graph(&compute()),
+        Err(ReflectError::NoGraphEntryPoint)
+    );
+    assert_eq!(
+        reflect_graph(&graph_module("g", &[30], 2)),
+        Err(ReflectError::GraphEntryPoint { graph: 40 })
+    );
+    assert_eq!(
+        reflect_graph(&graph_module("g", &[30, 99], 1)),
+        Err(ReflectError::GraphInterface { variable: 99 })
+    );
+    let mut words = graph_module("g", &[30, 33], 1);
+    instruction(&mut words, Op::TypeFloat, &[50, 32]);
+    instruction(
+        &mut words,
+        Op::TypePointer,
+        &[51, StorageClass::UniformConstant as u32, 50],
+    );
+    instruction(
+        &mut words,
+        Op::Variable,
+        &[51, 33, StorageClass::UniformConstant as u32],
+    );
+    assert_eq!(
+        reflect_graph(&words),
+        Err(ReflectError::GraphInterface { variable: 33 })
+    );
+    let mut words = graph_module("g", &[30], 1);
+    instruction(&mut words, Op::TypeTensorARM, &[60, 10, 19]);
+    instruction(&mut words, Op::GraphConstantARM, &[60, 61, 0]);
+    assert_eq!(reflect_graph(&words), Err(ReflectError::TensorType(60)));
+    let mut words = graph_module("g", &[30], 1);
+    let mut entry = vec![77];
+    entry.extend(string("other"));
+    instruction(&mut words, Op::GraphEntryPointARM, &entry);
+    assert_eq!(
+        reflect_graph(&words),
+        Err(ReflectError::GraphEntryPoint { graph: 77 })
     );
 }

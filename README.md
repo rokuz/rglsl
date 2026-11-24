@@ -104,7 +104,11 @@ the stages of every binding and push constant ranges per stage; a binding whose 
 differs between stages is an error. `rglsl_link::spirv_reflection::reflect(words)` reflects any
 SPIR-V module with one entry point, glslang's too, and returns an error, never a panic, for
 malformed words. (`-q`'s glslang-style reflection of the GLSL source is a different thing:
-`rglsl_link::reflect`.)
+`rglsl_link::reflect`.) `rglsl_link::spirv_reflection::reflect_graph(words)` reflects a data graph
+module (`SPV_ARM_graph`, as in a `.vgf` file), which has graph entry points instead of a shader
+entry point: for every graph entry point its name and its input and output tensors in the order
+of the graph's interface (descriptor set, binding, count, element type, rank and shape), and the
+graph constants with their ids and tensor types.
 
 ```rust
 use rglsl_link::spirv_reflection::{PipelineLayout, vulkan_stage_flags};

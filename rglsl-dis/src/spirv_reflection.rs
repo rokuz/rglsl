@@ -1,4 +1,5 @@
 mod error;
+mod graph;
 mod interface;
 mod json;
 mod layout;
@@ -12,6 +13,9 @@ mod tests;
 use rglsl_types::ShaderStage;
 
 pub use error::{BindingUse, LayoutError, ReflectError};
+pub use graph::{
+    GraphConstant, GraphEntryPoint, GraphReflection, GraphTensor, TensorType, reflect_graph,
+};
 pub use json::program_json;
 pub use pipeline::{
     DescriptorSetLayout, LayoutBinding, PipelineLayout, PushConstantRange, vulkan_stage_flags,
