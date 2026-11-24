@@ -42,7 +42,8 @@ for binary in &program.stages {
 `binary.spirv_reflection()` reflects a stage: descriptor bindings with their Vulkan descriptor
 types and counts, push constants, inputs and outputs, specialization constants and the workgroup
 size; `spirv_reflection::PipelineLayout::new` merges the stages into descriptor set layouts and
-push-constant ranges.
+push-constant ranges. `spirv_reflection::reflect_graph(words)` reflects a data graph module
+(`SPV_ARM_graph`): graph entry points with their input and output tensors, and graph constants.
 
 `rglsl-dis` turns SPIR-V into text: glslang's `-H` disassembly, SPIRV-Tools' `spirv-dis` form and
 hexadecimal text. [samples](https://github.com/rokuz/rglsl/tree/v@VERSION@/samples) has complete

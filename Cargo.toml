@@ -55,21 +55,21 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rokuz/rglsl"
 # rglsl started as a hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0).
-version = "0.1.2"
+version = "0.1.3"
 authors = ["rglsl developers", "gfx-rs developers"]
 
 [workspace.dependencies]
-rglsl = { version = "0.1.2", path = "./rglsl" }
-rglsl-ast = { version = "0.1.2", path = "./rglsl-ast" }
-rglsl-derive = { version = "0.1.2", path = "./rglsl-derive" }
-rglsl-dis = { version = "0.1.2", path = "./rglsl-dis" }
-rglsl-fuzz = { version = "0.1.2", path = "./rglsl-fuzz" }
-rglsl-sema = { version = "0.1.2", path = "./rglsl-sema" }
-rglsl-pp = { version = "0.1.2", path = "./rglsl-pp" }
-rglsl-link = { version = "0.1.2", path = "./rglsl-link" }
-rglsl-opt = { version = "0.1.2", path = "./rglsl-opt" }
+rglsl = { version = "0.1.3", path = "./rglsl" }
+rglsl-ast = { version = "0.1.3", path = "./rglsl-ast" }
+rglsl-derive = { version = "0.1.3", path = "./rglsl-derive" }
+rglsl-dis = { version = "0.1.3", path = "./rglsl-dis" }
+rglsl-fuzz = { version = "0.1.3", path = "./rglsl-fuzz" }
+rglsl-sema = { version = "0.1.3", path = "./rglsl-sema" }
+rglsl-pp = { version = "0.1.3", path = "./rglsl-pp" }
+rglsl-link = { version = "0.1.3", path = "./rglsl-link" }
+rglsl-opt = { version = "0.1.3", path = "./rglsl-opt" }
 rglsl-test = { path = "./rglsl-test" }
-rglsl-types = { version = "0.1.2", path = "./rglsl-types" }
+rglsl-types = { version = "0.1.3", path = "./rglsl-types" }
 
 anyhow = { version = "1.0.87", default-features = false }
 arbitrary = "1.4.2"
