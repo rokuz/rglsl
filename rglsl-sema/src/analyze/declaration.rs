@@ -1072,11 +1072,17 @@ impl Analyzer<'_> {
     fn member_qualifier_checks(
         &mut self,
         declaration: &Spanned<StructDeclaration>,
-        in_heap: bool,
+        placement: &Placement,
         qualifiers: &mut Qualifiers,
     ) {
+        let in_heap = placement.in_heap;
         if let Some(qualifier) = &declaration.node.ty.node.qualifier {
-            self.heap_member_checks(qualifier.span, qualifiers, in_heap);
+            self.heap_member_checks(
+                qualifier.span,
+                qualifiers,
+                in_heap,
+                placement.in_block.is_some(),
+            );
         }
         if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_error(
@@ -3398,7 +3404,7 @@ impl Analyzer<'_> {
         mut members: Vec<Member>,
     ) -> Vec<Member> {
         let mut qualifiers = self.optional_qualifiers(&declaration.node.ty.node);
-        self.member_qualifier_checks(declaration, placement.in_heap, &mut qualifiers);
+        self.member_qualifier_checks(declaration, &placement, &mut qualifiers);
         if matches!(
             declaration.node.ty.node.specifier.node.non_array,
             TypeSpecifierNonArray::Struct(_)

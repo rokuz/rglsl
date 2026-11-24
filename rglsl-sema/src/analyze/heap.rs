@@ -251,7 +251,20 @@ impl Analyzer<'_> {
         span: Span,
         qualifiers: &Qualifiers,
         in_heap: bool,
+        in_block: bool,
     ) {
+        if in_block
+            && let Some(entry) = qualifiers.layout_entry(LayoutId::DescriptorStride)
+            && !qualifiers.has_layout(LayoutId::DescriptorHeap)
+        {
+            self.error(
+                entry.span,
+                invalid(
+                    "descriptor_stride",
+                    "must specify 'descriptor_heap' to use 'descriptor_stride'",
+                ),
+            );
+        }
         if in_heap {
             return;
         }

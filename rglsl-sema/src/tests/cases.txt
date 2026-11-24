@@ -4503,6 +4503,16 @@ layout(local_size_x = 1) in;
 layout(descriptor_stride = 2) uniform U { uint a; } u[];
 layout(descriptor_heap, descriptor_stride = 3) uniform V { uint a; } v[];
 void main() {}
+### descriptor_stride on a block member needs descriptor_heap | comp 460 | 5:InvalidQualifier, 6:InvalidQualifier, 7:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+layout(local_size_x = 1) in;
+layout(heap_offset = 0) resourceheap Textures { layout(descriptor_stride = 64) texture2D items[]; } textures;
+layout(heap_offset = 0) samplerheap Samplers { layout(descriptor_stride = 64) sampler items[]; } samplers;
+layout(set = 0, binding = 0) uniform Block { layout(descriptor_stride = 64) uint value; } block;
+struct Plain { layout(descriptor_stride = 64) uint value; };
+layout(heap_offset = 0) resourceheap Sized { layout(descriptor_size = 64) texture2D items[]; } sized;
+void main() {}
 ### structured descriptor heaps | comp 460 | ok
 #extension GL_EXT_descriptor_heap : require
 #extension GL_EXT_structured_descriptor_heap : require
