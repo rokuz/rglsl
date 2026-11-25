@@ -193,3 +193,15 @@ twin = "indexes `accEXT1` with `i & 1`"
 ["spv.RayGenShaderArray.rgen"]
 undefined = "indexes the two-element `accNV1[2]` with the shader record's `i`, which the harness fills with a value up to 7, outside the array"
 twin = "indexes `accNV1` with `i & 1`"
+
+["spv.nv.hitobject-allops.rgen"]
+undefined = "records hits (`hitObjectRecordHitNV`, `hitObjectRecordHitMotionNV` and the two `WithIndex` forms) for instance 1, primitive 1 and geometry 1, and the scene of the harness has one instance with one geometry of one triangle; the hit object that `hitObjectExecuteShaderNV` then runs names an instance that does not exist (the NVIDIA driver loses the device, for glslang's module and ours alike)"
+twin = "records the hits for instance 0, primitive 0 and geometry 0"
+
+["spv.nv.hitobject-allops.rchit"]
+undefined = "records hits (`hitObjectRecordHitNV`, `hitObjectRecordHitMotionNV` and the two `WithIndex` forms) for instance 1, primitive 1 and geometry 1, and the scene of the harness has one instance with one geometry of one triangle; the hit object that `hitObjectExecuteShaderNV` then runs names an instance that does not exist (the NVIDIA driver loses the device, for glslang's module and ours alike)"
+twin = "records the hits for instance 0, primitive 0 and geometry 0"
+
+["spv.nv.hitobject-allops.rmiss"]
+undefined = "records hits (`hitObjectRecordHitNV`, `hitObjectRecordHitMotionNV` and the two `WithIndex` forms) for instance 1, primitive 1 and geometry 1, and the scene of the harness has one instance with one geometry of one triangle; the hit object that `hitObjectExecuteShaderNV` then runs names an instance that does not exist (the NVIDIA driver loses the device, for glslang's module and ours alike)"
+twin = "records the hits for instance 0, primitive 0 and geometry 0"

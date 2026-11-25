@@ -7,3 +7,9 @@ why = "the unoptimized modules of a 5,000-deep chain of calls are too heavy for 
 
 ["spv.coopvecloadstore.comp"]
 why = "glslang's module of this cooperative vector load/store shader loses the NVIDIA device (VK_ERROR_DEVICE_LOST) and the driver resets: in the stage 14 corpus run it was the batch of a burst of nvlddmkm resets, while the same rglsl output had run without resets the day before"
+
+["spv.nv.hitobject-allops.rchit"]
+why = "the NVIDIA driver (617.14) loses the device (VK_ERROR_DEVICE_LOST from vkWaitForFences, an nvlddmkm event 153) when a closest hit shader calls hitObjectExecuteShaderNV on a hit object that hitObjectRecordHitWithIndexNV recorded, for glslang's module and ours alike. Reduced on the twin to that record and the execution alone, with instance, primitive and geometry 0, hit kind 0xFE, shader binding table record 1 (an empty closest hit shader), a ray that hits the triangle and a pipeline recursion depth of 2, 3 or 8, the device is still lost; without the execution, or without the recorded hit, the shader runs. The same calls run in the ray generation shader (spv.nv.hitobject-allops.rgen)"
+
+["spv.nv.hitobject-allops.rmiss"]
+why = "the NVIDIA driver (617.14) loses the device (VK_ERROR_DEVICE_LOST, nvlddmkm events 153) on this miss shader as on spv.nv.hitobject-allops.rchit, which has the same body and was reduced to hitObjectExecuteShaderNV on a hit object recorded by hitObjectRecordHitWithIndexNV; glslang's module fails on the driver too. The same calls run in the ray generation shader (spv.nv.hitobject-allops.rgen)"

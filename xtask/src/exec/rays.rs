@@ -250,6 +250,15 @@ pub fn traces(reflection: &Reflection) -> bool {
         Op::TraceRayMotionNV,
         Op::ExecuteCallableKHR,
         Op::ExecuteCallableNV,
+        Op::HitObjectTraceRayNV,
+        Op::HitObjectTraceRayMotionNV,
+        Op::HitObjectExecuteShaderNV,
+        Op::HitObjectTraceRayEXT,
+        Op::HitObjectTraceRayMotionEXT,
+        Op::HitObjectExecuteShaderEXT,
+        Op::HitObjectReorderExecuteShaderEXT,
+        Op::HitObjectTraceReorderExecuteEXT,
+        Op::HitObjectTraceMotionReorderExecuteEXT,
     ]
     .into_iter()
     .any(|op| reflection.uses(op))
@@ -626,6 +635,23 @@ mod tests {
         let script = harness.pipeline.script(&names);
         assert!(script.contains("  SHADER_GROUP g_hit tested harness4\n"));
         assert!(script.contains("  MAX_RAY_RECURSION_DEPTH 2\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn hit_object_traces_and_executions_need_a_second_recursion_level() -> anyhow::Result<()> {
+        for op in [
+            Op::HitObjectTraceRayNV,
+            Op::HitObjectExecuteShaderNV,
+            Op::HitObjectTraceRayEXT,
+            Op::HitObjectReorderExecuteShaderEXT,
+        ] {
+            let mut module = Reflection::new(ExecutionModel::ClosestHitKHR);
+            module.body_opcodes.insert(op as u32);
+            let harness = harness(ShaderKind::ClosestHit, &module, 0, None, &mut Rng::new(3))
+                .map_err(anyhow::Error::msg)?;
+            assert_eq!(harness.pipeline.recursion, 2, "{op:?}");
+        }
         Ok(())
     }
 
