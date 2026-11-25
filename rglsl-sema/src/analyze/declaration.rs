@@ -14,7 +14,7 @@ use rglsl_ast::ast::{
     StructSpecifier, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 
-use super::heap::is_heap_storage;
+use super::heap::{heap_member_reason, is_heap_storage};
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::variables::{self, Redeclaration};
 use crate::constant::{Constant, ConstantValues, Value};
@@ -1155,6 +1155,11 @@ impl Analyzer<'_> {
             && !(in_heap && self.extension_enabled(Extension::ExtStructuredDescriptorHeap))
         {
             Some("a block member cannot have an opaque type")
+        } else if let Some(reason) = in_block
+            .filter(|_| in_heap)
+            .and_then(|block| heap_member_reason(&self.types, &ty, block.storage))
+        {
+            Some(reason)
         } else if in_block.is_some() && ty.contains_cooperative_matrix(&self.types) {
             Some("a block member cannot be or contain a cooperative matrix type")
         } else if in_heap && !last && ty.dimensions().first() == Some(&ArraySize::Unsized) {
@@ -1179,6 +1184,9 @@ impl Analyzer<'_> {
             );
         } else if in_block.is_some() {
             self.input_attachment_check(qualifiers, &ty, name.span);
+            if in_heap {
+                self.heap_image_format_check(qualifiers, &ty, name.span);
+            }
         }
         self.passthrough_storage_check(name.span, qualifiers, in_block.is_some());
         members.push(Member {
@@ -1377,7 +1385,6 @@ impl Analyzer<'_> {
             return;
         }
         if is_image
-            && !ty.is_array()
             && qualifiers.storage == Storage::Uniform
             && !qualifiers.flags.contains(QualifierFlags::WRITEONLY)
             && qualifiers.image_format().is_none()

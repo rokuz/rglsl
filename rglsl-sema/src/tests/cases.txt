@@ -4513,6 +4513,29 @@ layout(set = 0, binding = 0) uniform Block { layout(descriptor_stride = 64) uint
 struct Plain { layout(descriptor_stride = 64) uint value; };
 layout(heap_offset = 0) resourceheap Sized { layout(descriptor_size = 64) texture2D items[]; } sized;
 void main() {}
+### heap blocks hold only the descriptors of their heap | frag 460 | 6:InvalidStructMember, 7:InvalidStructMember, 8:InvalidStructMember, 9:InvalidStructMember, 10:InvalidStructMember, 11:InvalidStructMember
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_shader_image_load_formatted : require
+layout(heap_offset = 0) resourceheap A { sampler2D items[4]; } a;
+layout(heap_offset = 0) resourceheap B { layout(input_attachment_index = 0) subpassInput items[4]; } b;
+layout(heap_offset = 0) resourceheap C { sampler items[4]; } c;
+layout(heap_offset = 0) samplerheap D { texture2D items[4]; } d;
+layout(heap_offset = 0) samplerheap E { sampler2D items[4]; } e;
+layout(heap_offset = 0) resourceheap F { rayQueryEXT query; } f;
+layout(heap_offset = 0) resourceheap G { texture2D t[4]; image2D i[4]; accelerationStructureEXT tlas[4]; uint count; } g;
+layout(heap_offset = 0) samplerheap H { sampler s[4]; samplerShadow z[4]; } h;
+void main() {}
+### heap images need a format unless they are writeonly or formatted loads are enabled | frag 460 | 4:InvalidQualifier, 5:InvalidQualifier, 6:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+layout(heap_offset = 0) resourceheap A { image2D items[4]; } a;
+layout(descriptor_heap) uniform image2D images[];
+layout(set = 0, binding = 0) uniform image2D array[4];
+layout(heap_offset = 0) resourceheap B { layout(rgba8) image2D f[4]; writeonly image2D w[4]; } b;
+layout(set = 0, binding = 1) writeonly uniform image2D written[4];
+void main() {}
 ### structured descriptor heaps | comp 460 | ok
 #extension GL_EXT_descriptor_heap : require
 #extension GL_EXT_structured_descriptor_heap : require

@@ -10,8 +10,10 @@ use super::reference::{matrix_of, packing_of};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
 use crate::layout_id::LayoutId;
-use crate::scope::{LayoutValue, Qualifiers, Storage, SymbolKind};
-use crate::types::{BlockStorage, BlockType, Member, ReferenceLayout, Type, TypeKind};
+use crate::scope::{LayoutValue, QualifierFlags, Qualifiers, Storage, SymbolKind};
+use crate::types::{
+    BlockStorage, BlockType, Member, OpaqueKind, ReferenceLayout, Type, TypeKind, TypeRegistry,
+};
 
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
@@ -19,6 +21,44 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 
 pub(crate) const fn is_heap_storage(storage: Storage) -> bool {
     matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap)
+}
+
+pub(crate) fn heap_member_reason(
+    types: &TypeRegistry,
+    ty: &Type,
+    storage: Storage,
+) -> Option<&'static str> {
+    let opaque = types.find_in_members(ty, |member| match member.kind {
+        TypeKind::Opaque(opaque) => Some(opaque.kind),
+        _ => None,
+    })?;
+    let resource_heap = storage == Storage::ResourceHeap;
+    match opaque {
+        OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure
+            if resource_heap =>
+        {
+            None
+        }
+        OpaqueKind::Sampler if !resource_heap => None,
+        OpaqueKind::CombinedSampler => Some(
+            "a heap block cannot hold a combined image sampler: declare the texture in a resourceheap block, the sampler in a samplerheap block, and combine them at the use",
+        ),
+        OpaqueKind::SubpassInput => {
+            Some("a heap block cannot hold a subpass input: declare it with set and binding")
+        }
+        OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure => Some(
+            "a samplerheap block can only hold samplers: textures, images and acceleration structures belong in a resourceheap block",
+        ),
+        OpaqueKind::Sampler => {
+            Some("a resourceheap block cannot hold samplers: they belong in a samplerheap block")
+        }
+        OpaqueKind::RayQuery
+        | OpaqueKind::HitObjectNv
+        | OpaqueKind::HitObjectExt
+        | OpaqueKind::TileImage => {
+            Some("a heap block can only hold descriptors, plain data and buffer references")
+        }
+    }
 }
 
 impl Analyzer<'_> {
@@ -242,6 +282,31 @@ impl Analyzer<'_> {
                     name: name.node.clone(),
                     reason: "block name cannot be redefined",
                 },
+            );
+        }
+    }
+
+    pub(crate) fn heap_image_format_check(
+        &mut self,
+        qualifiers: &Qualifiers,
+        ty: &Type,
+        span: Span,
+    ) {
+        let image = self
+            .types
+            .find_in_members(ty, |member| match member.kind {
+                TypeKind::Opaque(opaque) if opaque.is_image() => Some(()),
+                _ => None,
+            })
+            .is_some();
+        if image
+            && !qualifiers.flags.contains(QualifierFlags::WRITEONLY)
+            && qualifiers.image_format().is_none()
+            && !self.extension_enabled(Extension::ExtShaderImageLoadFormatted)
+        {
+            self.error(
+                span,
+                invalid("image", "an image needs a format unless it is `writeonly`"),
             );
         }
     }
