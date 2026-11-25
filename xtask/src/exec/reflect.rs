@@ -2048,6 +2048,8 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     ty: types.data_type(pointee),
                 });
             }
+            StorageClass::HitObjectAttributeEXT | StorageClass::HitObjectAttributeNV
+                if is_ray_tracing(model) => {}
             StorageClass::TaskPayloadWorkgroupEXT if is_mesh_shading(model) => {
                 reflection.task_payload = Some(types.data_type(pointee));
             }

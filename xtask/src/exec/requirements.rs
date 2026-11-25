@@ -242,6 +242,16 @@ pub fn capability(capability: Capability) -> Requirement {
         C::RayTracingMotionBlurNV => {
             needs![F("RayTracingMotionBlurFeaturesNV.rayTracingMotionBlur")]
         }
+        C::ShaderInvocationReorderEXT => {
+            needs![F(
+                "RayTracingInvocationReorderFeaturesEXT.rayTracingInvocationReorder"
+            )]
+        }
+        C::ShaderInvocationReorderNV => {
+            needs![F(
+                "RayTracingInvocationReorderFeaturesNV.rayTracingInvocationReorder"
+            )]
+        }
         C::RayTracingPositionFetchKHR | C::RayQueryPositionFetchKHR => {
             needs![F(
                 "RayTracingPositionFetchFeaturesKHR.rayTracingPositionFetch"
@@ -595,6 +605,8 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_no_integer_wrap_decoration"
             | "SPV_KHR_ray_tracing"
             | "SPV_KHR_ray_query"
+            | "SPV_EXT_shader_invocation_reorder"
+            | "SPV_NV_shader_invocation_reorder"
             | "SPV_KHR_ray_cull_mask"
             | "SPV_KHR_ray_tracing_position_fetch"
             | "SPV_NV_ray_tracing"
