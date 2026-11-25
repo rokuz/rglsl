@@ -467,6 +467,19 @@ fn links_libraries_and_object_modules() -> TestResult {
     let run = rglsl(&directory, &["--object", "lighting.glsl"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("lighting.rglo").is_file());
+    fs::copy(
+        directory.join("lighting.glsl"),
+        directory.join("1.lighting.glsl"),
+    )?;
+    let run = rglsl(
+        &directory,
+        &["-V", "-o", "dotted.spv", "main.frag", "1.lighting.glsl"],
+    )?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        entry_point_names(&module(&directory.join("dotted.spv"))?),
+        ["main"]
+    );
     let run = rglsl(&directory, &["-V", "main.frag", "lighting.rglo"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("frag.spv").is_file());
@@ -476,6 +489,65 @@ fn links_libraries_and_object_modules() -> TestResult {
         run.stderr
             .contains("ERROR: Linking fragment stage: No function definition (body) found: ")
     );
+    Ok(())
+}
+
+#[test]
+fn object_modules_are_compiled_for_a_spirv_version() -> TestResult {
+    let directory = work_dir("object-spirv-version")?;
+    fs::write(
+        directory.join("tracing.glsl"),
+        "#version 460
+#extension GL_EXT_ray_tracing : require
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+void trace(vec3 origin, vec3 direction, const int payload) {
+    traceRayEXT(scene, 0u, 0xff, 0, 0, 0, origin, 0.0, direction, 1.0, payload);
+}
+",
+    )?;
+    fs::write(
+        directory.join("main.rgen"),
+        "#version 460
+#extension GL_EXT_ray_tracing : require
+void trace(vec3 origin, vec3 direction, const int payload);
+layout(location = 2) rayPayloadEXT vec3 color;
+void main() { trace(vec3(0.0), vec3(1.0), 2); }
+",
+    )?;
+    let run = rglsl(&directory, &["--object", "tracing.glsl"])?;
+    assert_eq!(run.code, Some(2), "{}", run.stderr);
+    assert!(
+        format!("{}{}", run.stdout, run.stderr).contains("needs a newer SPIR-V version"),
+        "{}{}",
+        run.stdout,
+        run.stderr
+    );
+    let run = rglsl(
+        &directory,
+        &["--object", "--target-env", "spirv1.4", "tracing.glsl"],
+    )?;
+    assert_eq!(run.code, Some(0), "{}{}", run.stdout, run.stderr);
+    let run = rglsl(
+        &directory,
+        &[
+            "--target-env",
+            "vulkan1.2",
+            "-o",
+            "linked.spv",
+            "main.rgen",
+            "tracing.rglo",
+        ],
+    )?;
+    assert_eq!(run.code, Some(0), "{}{}", run.stdout, run.stderr);
+    assert_eq!(
+        entry_point_names(&module(&directory.join("linked.spv"))?),
+        ["main"]
+    );
+    let run = rglsl(
+        &directory,
+        &["--object", "--target-env", "vulkan1.2", "tracing.glsl"],
+    )?;
+    assert_eq!(run.code, Some(1));
     Ok(())
 }
 

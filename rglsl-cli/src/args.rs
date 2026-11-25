@@ -440,7 +440,7 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     if options.output.is_some() && !options.spirv && !options.object {
         return Err(Exit::error("no binary generation requested (e.g., -V)"));
     }
-    if options.spirv_version.is_some() && !options.spirv {
+    if options.spirv_version.is_some() && !options.spirv && !options.object {
         return Err(Exit::error(
             "To generate SPIR-V, also specify client semantics. See -G and -V.",
         ));

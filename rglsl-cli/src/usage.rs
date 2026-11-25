@@ -121,7 +121,9 @@ Options:
 
 rglsl's own options:
   --object                          compile every input file to an rglsl object
-                                    module (<file>.rglo, or -o for one input)
+                                    module (<file>.rglo, or -o for one input);
+                                    --target-env spirv... sets the SPIR-V
+                                    version the module is compiled for
   --target-gpu {nvidia | amd | universal-desktop | universal-mobile}
                                     the GPU that -O and -Os optimize for;
                                     defaults to universal-desktop

@@ -138,12 +138,10 @@ impl<'a> Session<'a> {
             return Err(Exit::Usage);
         };
         match extension {
-            "glsl" => match stem.rsplit_once('.') {
-                Some((_, inner)) => ShaderStage::from_extension(inner)
-                    .map(Class::Stage)
-                    .ok_or(Exit::Usage),
-                None => Ok(Class::Library),
-            },
+            "glsl" => Ok(stem
+                .rsplit_once('.')
+                .and_then(|(_, inner)| ShaderStage::from_extension(inner))
+                .map_or(Class::Library, Class::Stage)),
             OBJECT_EXTENSION => Ok(Class::Object),
             other => ShaderStage::from_extension(other)
                 .map(Class::Stage)
