@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl::visit::VisitorMut;
 use rglsl::{
-    AddressSpace, Arena, Binding, Block, Expression, Function, GlobalVariable, Handle,
-    HitObjectFunction, Literal, Module, RayPipelineFunction, RayTracingData, RayTracingFlavor,
-    Span, Statement,
+    AddressSpace, Arena, Binding, Expression, Function, GlobalVariable, Handle, Literal, Module,
+    RayDataKind, RayTracingData, RayTracingFlavor, Span, Statement,
 };
 
 use crate::error::{LinkError, internal};
@@ -13,103 +12,27 @@ type Locations = Vec<u32>;
 
 type Bound = BTreeMap<u32, u32>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Payload,
-    CallableData,
-    HitObjectAttribute,
-}
-
-impl Kind {
-    const fn holds(self, space: AddressSpace) -> bool {
-        match self {
-            Self::Payload => matches!(
-                space,
-                AddressSpace::RayPayload | AddressSpace::IncomingRayPayload
-            ),
-            Self::CallableData => matches!(
-                space,
-                AddressSpace::CallableData | AddressSpace::IncomingCallableData
-            ),
-            Self::HitObjectAttribute => matches!(space, AddressSpace::HitObjectAttribute { .. }),
-        }
-    }
-
-    const fn qualifiers(self) -> &'static str {
-        match self {
-            Self::Payload => "rayPayloadEXT/rayPayloadInEXT",
-            Self::CallableData => "callableDataEXT/callableDataInEXT",
-            Self::HitObjectAttribute => "hitObjectAttributeNV/hitObjectAttributeEXT",
+const fn holds(kind: RayDataKind, space: AddressSpace) -> bool {
+    match kind {
+        RayDataKind::Payload => matches!(
+            space,
+            AddressSpace::RayPayload | AddressSpace::IncomingRayPayload
+        ),
+        RayDataKind::CallableData => matches!(
+            space,
+            AddressSpace::CallableData | AddressSpace::IncomingCallableData
+        ),
+        RayDataKind::HitObjectAttribute => {
+            matches!(space, AddressSpace::HitObjectAttribute { .. })
         }
     }
 }
 
-const fn hit_object_data(function: &HitObjectFunction) -> Option<(Kind, RayTracingData)> {
-    match *function {
-        HitObjectFunction::TraceRay(ref trace)
-        | HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
-            Some((Kind::Payload, trace.payload))
-        }
-        HitObjectFunction::ExecuteShader { payload }
-        | HitObjectFunction::ReorderExecute { payload, .. } => Some((Kind::Payload, payload)),
-        HitObjectFunction::RecordHit { attributes, .. }
-        | HitObjectFunction::RecordFromQuery { attributes, .. }
-        | HitObjectFunction::GetAttributes { attributes } => {
-            Some((Kind::HitObjectAttribute, attributes))
-        }
-        _ => None,
-    }
-}
-
-const fn hit_object_data_mut(
-    function: &mut HitObjectFunction,
-) -> Option<(Kind, &mut RayTracingData)> {
-    match *function {
-        HitObjectFunction::TraceRay(ref mut trace)
-        | HitObjectFunction::TraceReorderExecute { ref mut trace, .. } => {
-            Some((Kind::Payload, &mut trace.payload))
-        }
-        HitObjectFunction::ExecuteShader { ref mut payload }
-        | HitObjectFunction::ReorderExecute {
-            ref mut payload, ..
-        } => Some((Kind::Payload, payload)),
-        HitObjectFunction::RecordHit {
-            ref mut attributes, ..
-        }
-        | HitObjectFunction::RecordFromQuery {
-            ref mut attributes, ..
-        }
-        | HitObjectFunction::GetAttributes { ref mut attributes } => {
-            Some((Kind::HitObjectAttribute, attributes))
-        }
-        _ => None,
-    }
-}
-
-const fn ray_data(statement: &Statement) -> Option<(Kind, RayTracingData)> {
-    match *statement {
-        Statement::RayPipelineFunction(RayPipelineFunction::TraceRay { payload, .. }) => {
-            Some((Kind::Payload, payload))
-        }
-        Statement::RayPipelineFunction(RayPipelineFunction::ExecuteCallable { data, .. }) => {
-            Some((Kind::CallableData, data))
-        }
-        Statement::HitObject { ref fun, .. } => hit_object_data(fun),
-        _ => None,
-    }
-}
-
-const fn ray_data_mut(statement: &mut Statement) -> Option<(Kind, &mut RayTracingData)> {
-    match *statement {
-        Statement::RayPipelineFunction(RayPipelineFunction::TraceRay {
-            ref mut payload, ..
-        }) => Some((Kind::Payload, payload)),
-        Statement::RayPipelineFunction(RayPipelineFunction::ExecuteCallable {
-            ref mut data,
-            ..
-        }) => Some((Kind::CallableData, data)),
-        Statement::HitObject { ref mut fun, .. } => hit_object_data_mut(fun),
-        _ => None,
+const fn qualifiers(kind: RayDataKind) -> &'static str {
+    match kind {
+        RayDataKind::Payload => "rayPayloadEXT/rayPayloadInEXT",
+        RayDataKind::CallableData => "callableDataEXT/callableDataInEXT",
+        RayDataKind::HitObjectAttribute => "hitObjectAttributeNV/hitObjectAttributeEXT",
     }
 }
 
@@ -119,6 +42,13 @@ fn literal_location(literal: Literal) -> Option<u32> {
         Literal::U32(value) => Some(value),
         _ => None,
     }
+}
+
+fn argument_at(arguments: &[Handle<Expression>], parameter: u32) -> Option<Handle<Expression>> {
+    usize::try_from(parameter)
+        .ok()
+        .and_then(|position| arguments.get(position))
+        .copied()
 }
 
 fn bind(parameters: &[u32], locations: &[u32]) -> Bound {
@@ -137,22 +67,25 @@ struct Plan {
 }
 
 impl Plan {
-    fn parameters_of(&self, function: Handle<Function>) -> &[u32] {
+    fn parameters_of(&self, function: Handle<Function>) -> Result<&[u32], LinkError> {
         self.parameters
             .get(function.index())
-            .map_or(&[], Vec::as_slice)
+            .map(Vec::as_slice)
+            .ok_or_else(|| internal("a callee comes after its caller"))
     }
 
     fn not_constant(&self, callee: Handle<Function>) -> LinkError {
-        LinkError::RayLocationNotConstant(
-            self.names.get(callee.index()).cloned().unwrap_or_default(),
+        self.names.get(callee.index()).map_or_else(
+            || internal("function index"),
+            |name| LinkError::RayLocationNotConstant(name.clone()),
         )
     }
 
-    fn located_parameters(&self, function: &Function) -> Vec<u32> {
+    fn located_parameters(&self, function: &Function) -> Result<Vec<u32>, LinkError> {
         let mut found = BTreeSet::new();
         for statement in function.body.walk() {
-            if let Some((_, RayTracingData::Argument { index, .. })) = ray_data(statement) {
+            if let Some((_, RayTracingData::Argument { index, .. })) = statement.ray_tracing_data()
+            {
                 found.insert(index);
             }
             let Statement::Call {
@@ -163,17 +96,17 @@ impl Plan {
             else {
                 continue;
             };
-            for &parameter in self.parameters_of(callee) {
-                let passed = usize::try_from(parameter)
-                    .ok()
-                    .and_then(|position| arguments.get(position))
-                    .and_then(|&argument| function.expressions.try_get(argument).ok());
-                if let Some(&Expression::FunctionArgument(index)) = passed {
+            for &parameter in self.parameters_of(callee)? {
+                let argument =
+                    argument_at(arguments, parameter).ok_or_else(|| internal("call arity"))?;
+                if let Expression::FunctionArgument(index) =
+                    *function.expressions.try_get(argument).map_err(internal)?
+                {
                     found.insert(index);
                 }
             }
         }
-        found.into_iter().collect()
+        Ok(found.into_iter().collect())
     }
 
     fn location(
@@ -181,19 +114,19 @@ impl Plan {
         expressions: &Arena<Expression>,
         argument: Handle<Expression>,
         bound: &Bound,
-    ) -> Option<u32> {
-        match *expressions.try_get(argument).ok()? {
+    ) -> Result<Option<u32>, LinkError> {
+        Ok(match *expressions.try_get(argument).map_err(internal)? {
             Expression::Literal(literal) => literal_location(literal),
             Expression::Constant(constant) => {
-                let init = module.constants.try_get(constant).ok()?.init;
-                match *module.global_expressions.try_get(init).ok()? {
+                let init = module.constants.try_get(constant).map_err(internal)?.init;
+                match *module.global_expressions.try_get(init).map_err(internal)? {
                     Expression::Literal(literal) => literal_location(literal),
                     _ => None,
                 }
             }
             Expression::FunctionArgument(index) => bound.get(&index).copied(),
             _ => None,
-        }
+        })
     }
 
     fn call_locations(
@@ -204,13 +137,12 @@ impl Plan {
         arguments: &[Handle<Expression>],
         bound: &Bound,
     ) -> Result<Locations, LinkError> {
-        self.parameters_of(callee)
+        self.parameters_of(callee)?
             .iter()
             .map(|&parameter| {
-                usize::try_from(parameter)
-                    .ok()
-                    .and_then(|position| arguments.get(position))
-                    .and_then(|&argument| Self::location(module, expressions, argument, bound))
+                let argument =
+                    argument_at(arguments, parameter).ok_or_else(|| internal("call arity"))?;
+                Self::location(module, expressions, argument, bound)?
                     .ok_or_else(|| self.not_constant(callee))
             })
             .collect()
@@ -231,7 +163,7 @@ impl Plan {
             else {
                 continue;
             };
-            if self.parameters_of(callee).is_empty() {
+            if self.parameters_of(callee)?.is_empty() {
                 continue;
             }
             let locations =
@@ -255,7 +187,7 @@ impl Plan {
             requests: vec![BTreeSet::new(); module.functions.len()],
         };
         for (_, function) in module.functions.iter() {
-            let parameters = plan.located_parameters(function);
+            let parameters = plan.located_parameters(function)?;
             plan.parameters.push(parameters);
         }
         if plan.parameters.iter().all(Vec::is_empty) {
@@ -266,7 +198,7 @@ impl Plan {
             plan.request_callees(module, &entry.function, &unbound)?;
         }
         for (handle, function) in module.functions.iter().rev() {
-            let parameters = plan.parameters_of(handle).to_vec();
+            let parameters = plan.parameters_of(handle)?.to_vec();
             if parameters.is_empty() {
                 plan.request_callees(module, function, &unbound)?;
                 continue;
@@ -275,7 +207,7 @@ impl Plan {
                 .requests
                 .get(handle.index())
                 .cloned()
-                .unwrap_or_default();
+                .ok_or_else(|| internal("function index"))?;
             for locations in requests {
                 plan.request_callees(module, function, &bind(&parameters, &locations))?;
             }
@@ -292,18 +224,16 @@ struct Targets {
 
 struct Callbacks<'t> {
     targets: &'t Targets,
-    plan: &'t Plan,
 }
 
 impl<'a> VisitorMut<'a> for Callbacks<'_> {
     type Error = LinkError;
 
     fn function(&mut self, function: &mut Handle<Function>) -> Result<(), LinkError> {
-        *function = *self
-            .targets
-            .plain
-            .get(&function.index())
-            .ok_or_else(|| self.plan.not_constant(*function))?;
+        *function =
+            *self.targets.plain.get(&function.index()).ok_or_else(|| {
+                internal("a function used by a statement is not linked before it")
+            })?;
         Ok(())
     }
 }
@@ -315,12 +245,12 @@ struct Specializer<'m> {
 }
 
 impl Specializer<'_> {
-    fn variable(&self, kind: Kind, location: u32) -> Option<Handle<GlobalVariable>> {
+    fn variable(&self, kind: RayDataKind, location: u32) -> Option<Handle<GlobalVariable>> {
         self.module
             .global_variables
             .iter()
             .find(|&(_, global)| {
-                kind.holds(global.space)
+                holds(kind, global.space)
                     && matches!(
                         global.io,
                         Some(Binding::Location { location: declared, .. }) if declared == location
@@ -336,7 +266,7 @@ impl Specializer<'_> {
         arguments: &[Handle<Expression>],
         bound: &Bound,
     ) -> Result<Handle<Function>, LinkError> {
-        let target = if self.plan.parameters_of(callee).is_empty() {
+        let target = if self.plan.parameters_of(callee)?.is_empty() {
             self.targets.plain.get(&callee.index())
         } else {
             let locations =
@@ -349,6 +279,38 @@ impl Specializer<'_> {
             .ok_or_else(|| internal("a callee is not specialized before its caller"))
     }
 
+    fn resolve_argument(
+        &self,
+        name: Option<&str>,
+        expressions: &mut Arena<Expression>,
+        (kind, data): (RayDataKind, &mut RayTracingData),
+        bound: &Bound,
+        span: Span,
+    ) -> Result<(), LinkError> {
+        let RayTracingData::Argument { index, flavor } = *data else {
+            return Ok(());
+        };
+        let location = *bound
+            .get(&index)
+            .ok_or_else(|| internal("a location argument is not bound"))?;
+        *data = match flavor {
+            RayTracingFlavor::Nv => RayTracingData::Location(location),
+            RayTracingFlavor::Khr => {
+                let variable = self.variable(kind, location).ok_or_else(|| {
+                    LinkError::RayLocationNotDeclared {
+                        qualifiers: qualifiers(kind),
+                        location,
+                        function: name.unwrap_or_default().to_owned(),
+                    }
+                })?;
+                RayTracingData::Pointer(
+                    expressions.append(Expression::GlobalVariable(variable), span),
+                )
+            }
+        };
+        Ok(())
+    }
+
     fn specialize(&self, function: &mut Function, bound: &Bound) -> Result<(), LinkError> {
         let Function {
             ref name,
@@ -356,35 +318,16 @@ impl Specializer<'_> {
             ref mut expressions,
             ..
         } = *function;
-        let mut walked: Vec<&mut Block> = Vec::from([body]);
         let mut callbacks = Callbacks {
             targets: &self.targets,
-            plan: self.plan,
         };
-        while let Some(block) = walked.pop() {
+        body.try_visit_blocks_mut(|block| {
             for (statement, span) in block.span_iter_mut() {
-                let span = span.map_or_else(Span::default, |span| *span);
-                if let Some((kind, data)) = ray_data_mut(statement) {
-                    if let RayTracingData::Argument { index, flavor } = *data {
-                        let location = *bound
-                            .get(&index)
-                            .ok_or_else(|| internal("a location argument is not bound"))?;
-                        *data = match flavor {
-                            RayTracingFlavor::Nv => RayTracingData::Location(location),
-                            RayTracingFlavor::Khr => {
-                                let variable = self.variable(kind, location).ok_or_else(|| {
-                                    LinkError::RayLocationNotDeclared {
-                                        qualifiers: kind.qualifiers(),
-                                        location,
-                                        function: name.clone().unwrap_or_default(),
-                                    }
-                                })?;
-                                RayTracingData::Pointer(
-                                    expressions.append(Expression::GlobalVariable(variable), span),
-                                )
-                            }
-                        };
-                    }
+                let span = span
+                    .map(|span| *span)
+                    .ok_or_else(|| internal("a statement without a span"))?;
+                if let Some(data) = statement.ray_tracing_data_mut() {
+                    self.resolve_argument(name.as_deref(), expressions, data, bound, span)?;
                 } else if let Statement::Call {
                     function: ref mut callee,
                     ref arguments,
@@ -401,11 +344,8 @@ impl Specializer<'_> {
                     statement.visit_mut(&mut callbacks)?;
                 }
             }
-            for statement in block.iter_mut() {
-                statement.for_each_child_block_mut(|child| walked.push(child));
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -422,14 +362,17 @@ pub(crate) fn resolve(module: &mut Module) -> Result<(), LinkError> {
         targets: Targets::default(),
     };
     for (handle, mut function, span) in old.drain() {
-        let parameters = plan.parameters_of(handle);
+        let parameters = plan.parameters_of(handle)?;
         if parameters.is_empty() {
             specializer.specialize(&mut function, &Bound::new())?;
             let new = functions.append(function, span);
             specializer.targets.plain.insert(handle.index(), new);
             continue;
         }
-        let requests = plan.requests.get(handle.index()).into_iter().flatten();
+        let requests = plan
+            .requests
+            .get(handle.index())
+            .ok_or_else(|| internal("function index"))?;
         for locations in requests {
             let mut function = function.clone();
             specializer.specialize(&mut function, &bind(parameters, locations))?;

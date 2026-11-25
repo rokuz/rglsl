@@ -545,11 +545,17 @@ impl Builder {
     }
 }
 
-const fn is_resource(space: AddressSpace) -> bool {
-    matches!(
-        space,
-        AddressSpace::Handle | AddressSpace::Uniform | AddressSpace::Storage { .. }
-    )
+fn is_prunable_resource(module: &Module, symbol: &GlobalSymbol) -> bool {
+    symbol.kind != SymbolKind::BuiltIn
+        && module
+            .global_variables
+            .try_get(symbol.global)
+            .is_ok_and(|global| {
+                matches!(
+                    global.space,
+                    AddressSpace::Handle | AddressSpace::Uniform | AddressSpace::Storage { .. }
+                )
+            })
 }
 
 pub(crate) fn unused_on_use_globals(
@@ -560,22 +566,16 @@ pub(crate) fn unused_on_use_globals(
 ) -> Vec<BTreeSet<Handle<GlobalVariable>>> {
     objects
         .iter()
+        .zip(prunable)
         .enumerate()
-        .map(|(index, object)| {
+        .map(|(index, (object, &prunable))| {
             let module = &object.unit.module;
-            let all_optional = prunable.get(index).copied().unwrap_or(false);
             let on_use: BTreeSet<Handle<GlobalVariable>> = object
                 .unit
                 .globals
                 .iter()
                 .filter(|symbol| {
-                    symbol.on_use
-                        || (all_optional
-                            && symbol.kind != SymbolKind::BuiltIn
-                            && module
-                                .global_variables
-                                .try_get(symbol.global)
-                                .is_ok_and(|global| is_resource(global.space)))
+                    symbol.on_use || (prunable && is_prunable_resource(module, symbol))
                 })
                 .map(|symbol| symbol.global)
                 .collect();

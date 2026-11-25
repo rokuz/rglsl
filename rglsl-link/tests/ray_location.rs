@@ -1,7 +1,7 @@
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::{
-    Binding, Expression, Function, HitObjectFunction, Module, RayPipelineFunction, RayTracingData,
+    Binding, Expression, Function, Module, RayTracingData,
     ShaderStage, Statement,
 };
 use rglsl_link::{
@@ -80,22 +80,7 @@ fn link_errors(objects: &[ObjectModule]) -> TestResult<Vec<LinkError>> {
 }
 
 fn ray_data(statement: &Statement) -> Option<RayTracingData> {
-    match *statement {
-        Statement::RayPipelineFunction(RayPipelineFunction::TraceRay { payload, .. }) => {
-            Some(payload)
-        }
-        Statement::RayPipelineFunction(RayPipelineFunction::ExecuteCallable { data, .. }) => {
-            Some(data)
-        }
-        Statement::HitObject { ref fun, .. } => match *fun {
-            HitObjectFunction::TraceRay(ref trace) => Some(trace.payload),
-            HitObjectFunction::ExecuteShader { payload } => Some(payload),
-            HitObjectFunction::GetAttributes { attributes }
-            | HitObjectFunction::RecordFromQuery { attributes, .. } => Some(attributes),
-            _ => None,
-        },
-        _ => None,
-    }
+    statement.ray_tracing_data().map(|(_, data)| data)
 }
 
 fn locations(module: &Module, function: &Function) -> TestResult<Vec<u32>> {

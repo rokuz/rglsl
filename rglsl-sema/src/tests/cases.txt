@@ -4527,6 +4527,16 @@ layout(heap_offset = 0) resourceheap F { rayQueryEXT query; } f;
 layout(heap_offset = 0) resourceheap G { texture2D t[4]; image2D i[4]; accelerationStructureEXT tlas[4]; uint count; } g;
 layout(heap_offset = 0) samplerheap H { sampler s[4]; samplerShadow z[4]; } h;
 void main() {}
+### a heap block member struct is checked past its first descriptor | frag 460 | 6:InvalidStructMember, 8:InvalidStructMember
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+struct Pair { texture2D t; sampler s; };
+struct Swapped { sampler s; texture2D t; };
+layout(heap_offset = 0) resourceheap A { Pair p[4]; } a;
+struct Textures { texture2D t; texture2D u; };
+layout(heap_offset = 0) resourceheap B { Swapped p[4]; } b;
+layout(heap_offset = 0) resourceheap C { Textures p[4]; } c;
+void main() {}
 ### heap images need a format unless they are writeonly or formatted loads are enabled | frag 460 | 4:InvalidQualifier, 5:InvalidQualifier, 6:InvalidQualifier
 #extension GL_EXT_descriptor_heap : require
 #extension GL_EXT_structured_descriptor_heap : require
@@ -4647,6 +4657,12 @@ layout(location = 0) rayPayloadEXT vec3 color;
 void trace(const int payload) { traceRayEXT(scene, 0u, 0xff, 0, 0, 0, vec3(0.0), 0.0, vec3(1.0), 1.0, payload); }
 void call(const int data) { executeCallableEXT(0u, data); }
 void main() { trace(0); call(0); }
+### a nonuniform const parameter is not a payload number in a library | rgen 460 | 0:MissingEntryPoint, 5:InvalidBuiltinCall
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+void trace(nonuniformEXT const int payload) { traceRayEXT(scene, 0u, 0xff, 0, 0, 0, vec3(0.0), 0.0, vec3(1.0), 1.0, payload); }
+void traced(const int payload) { traceRayEXT(scene, 0u, 0xff, 0, 0, 0, vec3(0.0), 0.0, vec3(1.0), 1.0, payload); }
 ### trace with a payload | rgen 460 | ok
 #extension GL_EXT_ray_tracing : enable
 layout(binding = 0) uniform accelerationStructureEXT scene;

@@ -152,7 +152,10 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    let libraries: Vec<bool> = objects.iter().map(ObjectModule::is_library).collect();
+    let prunable: Vec<bool> = objects
+        .iter()
+        .map(|object| options.prune_library_globals && object.is_library())
+        .collect();
     let mut stage: Option<ShaderStage> = None;
     for object_stage in objects.iter().filter_map(ObjectModule::stage) {
         match stage {
@@ -249,10 +252,6 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
             )
         })
         .unwrap_or_default();
-    let prunable: Vec<bool> = libraries
-        .iter()
-        .map(|&library| library && options.prune_library_globals)
-        .collect();
     let unused = merge::unused_on_use_globals(&specialized, &order, main, &prunable);
     let mut builder = Builder::new(specialized, unused);
     builder.add_objects()?;

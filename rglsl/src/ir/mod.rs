@@ -4110,6 +4110,13 @@ pub enum RayPipelineFunction {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RayDataKind {
+    Payload,
+    CallableData,
+    HitObjectAttribute,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]

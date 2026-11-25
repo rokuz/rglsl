@@ -345,6 +345,10 @@ impl Analyzer<'_> {
                         .is_some_and(|variable| {
                             variable.origin == Origin::Parameter
                                 && variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
+                                && !variable
+                                    .qualifiers
+                                    .flags
+                                    .contains(QualifierFlags::NONUNIFORM)
                                 && signed_integer(&variable.ty)
                         })
             })

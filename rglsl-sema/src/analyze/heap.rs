@@ -28,36 +28,38 @@ pub(crate) fn heap_member_reason(
     ty: &Type,
     storage: Storage,
 ) -> Option<&'static str> {
-    let opaque = types.find_in_members(ty, |member| match member.kind {
-        TypeKind::Opaque(opaque) => Some(opaque.kind),
+    types.find_in_members(ty, |member| match member.kind {
+        TypeKind::Opaque(opaque) => opaque_member_reason(opaque.kind, storage),
         _ => None,
-    })?;
-    let resource_heap = storage == Storage::ResourceHeap;
-    match opaque {
-        OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure
-            if resource_heap =>
-        {
-            None
-        }
-        OpaqueKind::Sampler if !resource_heap => None,
-        OpaqueKind::CombinedSampler => Some(
+    })
+}
+
+const fn opaque_member_reason(opaque: OpaqueKind, storage: Storage) -> Option<&'static str> {
+    match (opaque, storage) {
+        (
+            OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure,
+            Storage::ResourceHeap,
+        )
+        | (OpaqueKind::Sampler, Storage::SamplerHeap) => None,
+        (OpaqueKind::CombinedSampler, _) => Some(
             "a heap block cannot hold a combined image sampler: declare the texture in a resourceheap block, the sampler in a samplerheap block, and combine them at the use",
         ),
-        OpaqueKind::SubpassInput => {
+        (OpaqueKind::SubpassInput, _) => {
             Some("a heap block cannot hold a subpass input: declare it with set and binding")
         }
-        OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure => Some(
+        (OpaqueKind::Texture | OpaqueKind::Image | OpaqueKind::AccelerationStructure, _) => Some(
             "a samplerheap block can only hold samplers: textures, images and acceleration structures belong in a resourceheap block",
         ),
-        OpaqueKind::Sampler => {
+        (OpaqueKind::Sampler, _) => {
             Some("a resourceheap block cannot hold samplers: they belong in a samplerheap block")
         }
-        OpaqueKind::RayQuery
-        | OpaqueKind::HitObjectNv
-        | OpaqueKind::HitObjectExt
-        | OpaqueKind::TileImage => {
-            Some("a heap block can only hold descriptors, plain data and buffer references")
-        }
+        (
+            OpaqueKind::RayQuery
+            | OpaqueKind::HitObjectNv
+            | OpaqueKind::HitObjectExt
+            | OpaqueKind::TileImage,
+            _,
+        ) => Some("a heap block can only hold descriptors, plain data and buffer references"),
     }
 }
 

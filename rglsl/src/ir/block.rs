@@ -95,15 +95,27 @@ impl Block {
     }
 
     pub fn visit_blocks_mut(&mut self, mut visit: impl FnMut(&mut Self)) {
+        let visited: Result<(), core::convert::Infallible> = self.try_visit_blocks_mut(|block| {
+            visit(block);
+            Ok(())
+        });
+        let Ok(()) = visited;
+    }
+
+    pub fn try_visit_blocks_mut<E>(
+        &mut self,
+        mut visit: impl FnMut(&mut Self) -> Result<(), E>,
+    ) -> Result<(), E> {
         let mut pending = Vec::from([self]);
         while let Some(block) = pending.pop() {
-            visit(block);
+            visit(block)?;
             for statement in block.body.iter_mut().rev() {
                 let start = pending.len();
                 statement.for_each_child_block_mut(|child| pending.push(child));
                 pending[start..].reverse();
             }
         }
+        Ok(())
     }
 
     pub fn span_at(&self, index: usize) -> Option<(&Statement, &Span)> {

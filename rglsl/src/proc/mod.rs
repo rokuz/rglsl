@@ -1092,6 +1092,67 @@ impl crate::RayTracingData {
     }
 }
 
+impl crate::Statement {
+    pub const fn ray_tracing_data(&self) -> Option<(crate::RayDataKind, crate::RayTracingData)> {
+        use crate::{HitObjectFunction as Hf, RayDataKind as Kind, RayPipelineFunction as Rp};
+        match *self {
+            Self::RayPipelineFunction(Rp::TraceRay { payload, .. }) => {
+                Some((Kind::Payload, payload))
+            }
+            Self::RayPipelineFunction(Rp::ExecuteCallable { data, .. }) => {
+                Some((Kind::CallableData, data))
+            }
+            Self::HitObject { ref fun, .. } => match *fun {
+                Hf::TraceRay(ref trace) | Hf::TraceReorderExecute { ref trace, .. } => {
+                    Some((Kind::Payload, trace.payload))
+                }
+                Hf::ExecuteShader { payload } | Hf::ReorderExecute { payload, .. } => {
+                    Some((Kind::Payload, payload))
+                }
+                Hf::RecordHit { attributes, .. }
+                | Hf::RecordFromQuery { attributes, .. }
+                | Hf::GetAttributes { attributes } => Some((Kind::HitObjectAttribute, attributes)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub const fn ray_tracing_data_mut(
+        &mut self,
+    ) -> Option<(crate::RayDataKind, &mut crate::RayTracingData)> {
+        use crate::{HitObjectFunction as Hf, RayDataKind as Kind, RayPipelineFunction as Rp};
+        match *self {
+            Self::RayPipelineFunction(Rp::TraceRay {
+                ref mut payload, ..
+            }) => Some((Kind::Payload, payload)),
+            Self::RayPipelineFunction(Rp::ExecuteCallable { ref mut data, .. }) => {
+                Some((Kind::CallableData, data))
+            }
+            Self::HitObject { ref mut fun, .. } => match *fun {
+                Hf::TraceRay(ref mut trace) | Hf::TraceReorderExecute { ref mut trace, .. } => {
+                    Some((Kind::Payload, &mut trace.payload))
+                }
+                Hf::ExecuteShader { ref mut payload }
+                | Hf::ReorderExecute {
+                    ref mut payload, ..
+                } => Some((Kind::Payload, payload)),
+                Hf::RecordHit {
+                    ref mut attributes, ..
+                }
+                | Hf::RecordFromQuery {
+                    ref mut attributes, ..
+                }
+                | Hf::GetAttributes { ref mut attributes } => {
+                    Some((Kind::HitObjectAttribute, attributes))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 impl crate::RayPipelineFunction {
     pub const fn is_terminator(&self) -> bool {
         match *self {
