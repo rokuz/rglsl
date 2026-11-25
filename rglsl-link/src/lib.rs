@@ -56,6 +56,7 @@ use merge::{Builder, MergedGlobal};
 pub struct Options {
     pub limits: rglsl_sema::ResourceLimits,
     pub validate_io: bool,
+    pub prune_library_globals: bool,
 }
 
 #[derive(Debug)]
@@ -141,6 +142,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     if !errors.is_empty() {
         return Err(errors.into());
     }
+    let libraries: Vec<bool> = objects.iter().map(ObjectModule::is_library).collect();
     let mut stage: Option<ShaderStage> = None;
     for object_stage in objects.iter().filter_map(ObjectModule::stage) {
         match stage {
@@ -237,7 +239,11 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
             )
         })
         .unwrap_or_default();
-    let unused = merge::unused_on_use_globals(&specialized, &order, main);
+    let prunable: Vec<bool> = libraries
+        .iter()
+        .map(|&library| library && options.prune_library_globals)
+        .collect();
+    let unused = merge::unused_on_use_globals(&specialized, &order, main, &prunable);
     let mut builder = Builder::new(specialized, unused);
     builder.add_objects()?;
     builder.add_functions(&table, &order)?;
@@ -287,6 +293,9 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     errors.extend(builder_errors);
     if !errors.is_empty() {
         return Err(errors.into());
+    }
+    if options.prune_library_globals && !queries_rays(&module, &entry) {
+        entry.opacity_micromap = None;
     }
     module.entry_points.push(entry);
     module.debug_info = debug_info;
@@ -433,6 +442,20 @@ fn check_geometry_inputs(
             }
         }
     }
+}
+
+fn queries_rays(module: &Module, entry: &rglsl::EntryPoint) -> bool {
+    module
+        .functions
+        .iter()
+        .map(|(_, function)| function)
+        .chain(core::iter::once(&entry.function))
+        .any(|function| {
+            function
+                .body
+                .walk()
+                .any(|statement| matches!(statement, rglsl::Statement::RayQuery { .. }))
+        })
 }
 
 fn fix_up_library_functions(

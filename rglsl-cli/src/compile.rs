@@ -207,6 +207,7 @@ impl<'a> Session<'a> {
             validate_io: options.validate_io,
             reflection: options.reflect.then_some(options.reflect_options),
             optimize: options.optimization.options(),
+            prune_library_globals: false,
         }
     }
 

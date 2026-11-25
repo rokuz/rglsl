@@ -549,17 +549,21 @@ pub(crate) fn unused_on_use_globals(
     objects: &[ObjectModule],
     order: &[Node],
     main: usize,
+    prunable: &[bool],
 ) -> Vec<BTreeSet<Handle<GlobalVariable>>> {
     objects
         .iter()
         .enumerate()
         .map(|(index, object)| {
             let module = &object.unit.module;
+            let all_optional = prunable.get(index).copied().unwrap_or(false);
             let on_use: BTreeSet<Handle<GlobalVariable>> = object
                 .unit
                 .globals
                 .iter()
-                .filter(|symbol| symbol.on_use)
+                .filter(|symbol| {
+                    symbol.on_use || (all_optional && symbol.kind != SymbolKind::BuiltIn)
+                })
                 .map(|symbol| symbol.global)
                 .collect();
             if on_use.is_empty() {

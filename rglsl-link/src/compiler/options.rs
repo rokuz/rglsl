@@ -213,6 +213,7 @@ pub struct ProgramOptions {
     pub validate_io: bool,
     pub reflection: Option<reflect::Options>,
     pub optimize: OptOptions,
+    pub prune_library_globals: bool,
 }
 
 impl Default for ProgramOptions {
@@ -227,6 +228,7 @@ impl Default for ProgramOptions {
             limits: ResourceLimits::default(),
             validate_io: false,
             reflection: None,
+            prune_library_globals: false,
             optimize: OptOptions::default(),
         }
     }
@@ -243,6 +245,7 @@ impl ProgramOptions {
         crate::Options {
             limits: self.limits,
             validate_io: self.validate_io,
+            prune_library_globals: self.prune_library_globals,
         }
     }
 }
