@@ -332,17 +332,13 @@ impl FunctionLowerer<'_, '_> {
             .ok_or_else(|| semantic("the location must be a compile-time constant", at))
     }
 
-    pub(super) fn ray_data(
+    fn ray_data_pointer(
         &mut self,
         expression: &AstExpression,
         set: usize,
-        nv: bool,
         at: Span,
-    ) -> Result<RayTracingData> {
+    ) -> Result<Handle<Expression>> {
         let location = self.ray_location(expression, at)?;
-        if nv {
-            return Ok(RayTracingData::Location(location));
-        }
         let global = *self.lw.ray_data.get(&(set, location)).ok_or_else(|| {
             semantic(
                 match set {
@@ -353,8 +349,41 @@ impl FunctionLowerer<'_, '_> {
                 at,
             )
         })?;
-        let pointer = self.add(Expression::GlobalVariable(global), at)?;
-        Ok(RayTracingData::Pointer(pointer))
+        self.add(Expression::GlobalVariable(global), at)
+    }
+
+    fn ray_location_argument(&mut self, expression: &AstExpression) -> Result<Option<u32>> {
+        if !self.lw.library || self.info(expression)?.value.is_some() {
+            return Ok(None);
+        }
+        let value = recurse(|| self.rvalue(expression))?;
+        Ok(match self.expressions[value] {
+            Expression::FunctionArgument(index) => Some(index),
+            _ => None,
+        })
+    }
+
+    pub(super) fn ray_data(
+        &mut self,
+        expression: &AstExpression,
+        set: usize,
+        nv: bool,
+        at: Span,
+    ) -> Result<RayTracingData> {
+        if let Some(index) = self.ray_location_argument(expression)? {
+            let flavor = if nv {
+                RayTracingFlavor::Nv
+            } else {
+                RayTracingFlavor::Khr
+            };
+            return Ok(RayTracingData::Argument { index, flavor });
+        }
+        if nv {
+            return Ok(RayTracingData::Location(self.ray_location(expression, at)?));
+        }
+        Ok(RayTracingData::Pointer(
+            self.ray_data_pointer(expression, set, at)?,
+        ))
     }
 
     pub(super) fn ray_operands(

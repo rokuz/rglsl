@@ -1087,7 +1087,7 @@ impl crate::RayTracingData {
     pub const fn pointer(self) -> Option<crate::Handle<crate::Expression>> {
         match self {
             Self::Pointer(pointer) => Some(pointer),
-            Self::Location(_) => None,
+            Self::Location(_) | Self::Argument { .. } => None,
         }
     }
 }

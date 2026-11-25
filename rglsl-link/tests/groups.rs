@@ -16,6 +16,12 @@ fn stage(extension: &str) -> Option<ShaderStage> {
         "comp" => ShaderStage::Compute,
         "task" => ShaderStage::Task,
         "mesh" => ShaderStage::Mesh,
+        "rgen" => ShaderStage::RayGeneration,
+        "rint" => ShaderStage::Intersection,
+        "rahit" => ShaderStage::AnyHit,
+        "rchit" => ShaderStage::ClosestHit,
+        "rmiss" => ShaderStage::Miss,
+        "rcall" => ShaderStage::Callable,
         _ => return None,
     })
 }

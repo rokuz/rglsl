@@ -72,9 +72,9 @@ impl BlockContext<'_> {
         ]
         .into_iter()
         .chain(trace.time)
-        .chain(core::iter::once(trace.payload))
         .collect();
         operands.extend(self.ids(&rest)?);
+        operands.push(self.ray_tracing_data_id(trace.payload)?);
         Ok(operands)
     }
 
@@ -131,8 +131,8 @@ impl BlockContext<'_> {
                 sbt_record.for_each_operand(|operand| rest.push(operand));
                 rest.extend([origin, tmin, direction, tmax]);
                 rest.extend(time);
-                rest.push(attributes);
                 operands.extend(self.ids(&rest)?);
+                operands.push(self.ray_tracing_data_id(attributes)?);
                 if time.is_some() {
                     self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                 }
@@ -193,15 +193,15 @@ impl BlockContext<'_> {
                 hit_kind,
             } => {
                 self.writer.require(&feature::RAY_QUERY)?;
-                let rest: Vec<_> = [query, sbt_record_index, attributes]
-                    .into_iter()
-                    .chain(hit_kind)
-                    .collect();
-                operands.extend(self.ids(&rest)?);
+                operands.extend(self.ids(&[query, sbt_record_index])?);
+                operands.push(self.ray_tracing_data_id(attributes)?);
+                if let Some(hit_kind) = hit_kind {
+                    operands.push(self.cached.get(hit_kind)?);
+                }
                 Op::HitObjectRecordFromQueryEXT
             }
             HitObjectFunction::ExecuteShader { payload } => {
-                operands.push(self.cached.get(payload)?);
+                operands.push(self.ray_tracing_data_id(payload)?);
                 pick(
                     flavor,
                     Op::HitObjectExecuteShaderNV,
@@ -209,12 +209,12 @@ impl BlockContext<'_> {
                 )
             }
             HitObjectFunction::ReorderExecute { payload, hint } => {
-                operands.push(self.cached.get(payload)?);
+                operands.push(self.ray_tracing_data_id(payload)?);
                 operands.extend(self.hint_ids(hint)?);
                 Op::HitObjectReorderExecuteShaderEXT
             }
             HitObjectFunction::GetAttributes { attributes } => {
-                operands.push(self.cached.get(attributes)?);
+                operands.push(self.ray_tracing_data_id(attributes)?);
                 pick(
                     flavor,
                     Op::HitObjectGetAttributesNV,

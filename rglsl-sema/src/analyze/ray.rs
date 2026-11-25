@@ -10,7 +10,7 @@ use crate::builtins::kind::{HitObject, HitObjectFlavor, Ray};
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
 use crate::layout_id::LayoutId;
-use crate::scope::{Qualifiers, Storage};
+use crate::scope::{Origin, Qualifiers, Storage};
 use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
 use rglsl_types::ShaderStageMask;
 
@@ -332,6 +332,24 @@ impl Analyzer<'_> {
         }
     }
 
+    fn linker_resolves_location(&self, operand: Option<&Operand>) -> bool {
+        let signed_integer =
+            |ty: &Type| !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(Scalar::Int));
+        !self.defines_main
+            && operand.is_some_and(|operand| {
+                signed_integer(&operand.ty)
+                    && operand
+                        .root
+                        .and_then(|id| self.symbol(id))
+                        .and_then(|symbol| symbol.variable())
+                        .is_some_and(|variable| {
+                            variable.origin == Origin::Parameter
+                                && variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
+                                && signed_integer(&variable.ty)
+                        })
+            })
+    }
+
     pub(crate) fn ray_builtin_checks(
         &mut self,
         span: Span,
@@ -411,6 +429,7 @@ impl Analyzer<'_> {
         };
         match location(index) {
             None => true,
+            Some(None) if self.linker_resolves_location(operands.get(index)) => true,
             Some(None) => {
                 self.error(
                     span,

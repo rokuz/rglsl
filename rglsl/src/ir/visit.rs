@@ -1167,7 +1167,7 @@ macro_rules! ray_tracing_data_handles {
     ($this:ident, $v:ident, $visit:ident, [$($m:tt)?], [$($d:tt)?]) => {
         match *$this {
             RayTracingData::Pointer(ref $($m)? pointer) => $v.expression($($d)? pointer)?,
-            RayTracingData::Location(_) => {}
+            RayTracingData::Location(_) | RayTracingData::Argument { .. } => {}
         }
     };
 }
@@ -1201,7 +1201,7 @@ macro_rules! hit_object_trace_handles {
         if let Some(ref $($m)? time) = *time {
             $v.expression($($d)? time)?;
         }
-        $v.expression($($d)? payload)?;
+        payload.$visit($v)?;
     };
 }
 
@@ -1271,7 +1271,7 @@ macro_rules! hit_object_function_handles {
                 if let Some(ref $($m)? time) = *time {
                     $v.expression($($d)? time)?;
                 }
-                $v.expression($($d)? attributes)?;
+                attributes.$visit($v)?;
             }
             HitObjectFunction::RecordMiss {
                 ref $($m)? flags,
@@ -1303,25 +1303,25 @@ macro_rules! hit_object_function_handles {
             } => {
                 $v.expression($($d)? query)?;
                 $v.expression($($d)? sbt_record_index)?;
-                $v.expression($($d)? attributes)?;
+                attributes.$visit($v)?;
                 if let Some(ref $($m)? hit_kind) = *hit_kind {
                     $v.expression($($d)? hit_kind)?;
                 }
             }
             HitObjectFunction::ExecuteShader { ref $($m)? payload } => {
-                $v.expression($($d)? payload)?;
+                payload.$visit($v)?;
             }
             HitObjectFunction::ReorderExecute {
                 ref $($m)? payload,
                 ref $($m)? hint,
             } => {
-                $v.expression($($d)? payload)?;
+                payload.$visit($v)?;
                 if let Some(ref $($m)? hint) = *hint {
                     hint.$visit($v)?;
                 }
             }
             HitObjectFunction::GetAttributes { ref $($m)? attributes } => {
-                $v.expression($($d)? attributes)?;
+                attributes.$visit($v)?;
             }
             HitObjectFunction::SetShaderBindingTableRecordIndex { ref $($m)? index } => {
                 $v.expression($($d)? index)?;

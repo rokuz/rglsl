@@ -1,0 +1,19 @@
+#version 460
+#extension GL_NV_ray_tracing : require
+void trace(vec3 origin, const int payload);
+void call(const int data);
+layout(location = 0) rayPayloadNV vec4 color;
+layout(location = 1) rayPayloadNV float visibility;
+layout(location = 2) callableDataNV vec4 parameters;
+layout(set = 0, binding = 1) buffer Result { vec4 values[16]; } result;
+void main() {
+    vec3 origin = vec3(vec2(gl_LaunchIDNV.xy) / vec2(gl_LaunchSizeNV.xy), -1.0);
+    color = vec4(0.25, 0.5, 0.75, 1.0);
+    visibility = 0.125;
+    parameters = vec4(1.0, 2.0, 3.0, 4.0);
+    trace(origin, 0);
+    trace(origin, 1);
+    call(2);
+    uint index = (gl_LaunchIDNV.y * gl_LaunchSizeNV.x + gl_LaunchIDNV.x) % 16u;
+    result.values[index] = vec4(color.xy, visibility, parameters.w);
+}

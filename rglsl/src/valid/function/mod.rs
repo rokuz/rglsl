@@ -196,6 +196,14 @@ pub enum FunctionError {
     InvalidRayOperand(Handle<crate::Expression>),
     #[error("The payload passed to `traceRay` must be a pointer directly to a global variable")]
     PayloadPointerNotGlobal,
+    #[error(
+        "The ray tracing location is function argument {0}, which is not a signed integer argument"
+    )]
+    InvalidRayDataArgument(u32),
+    #[error(
+        "The ray tracing location is function argument {0}, which only an object module may leave to the linker"
+    )]
+    UnresolvedRayDataArgument(u32),
     #[error("Expression {0:?} is not a pointer to a hit object")]
     InvalidHitObjectExpression(Handle<crate::Expression>),
     #[error("This hit object operation is not available for {0:?} hit objects")]
@@ -292,6 +300,7 @@ struct BlockContext<'a> {
     types: &'a UniqueArena<crate::Type>,
     global_vars: &'a Arena<crate::GlobalVariable>,
     functions: &'a Arena<crate::Function>,
+    arguments: &'a [crate::FunctionArgument],
     prev_infos: &'a [FunctionInfo],
     return_type: Option<Handle<crate::Type>>,
 }
@@ -310,6 +319,7 @@ impl<'a> BlockContext<'a> {
             types: &module.types,
             global_vars: &module.global_variables,
             functions: &module.functions,
+            arguments: &fun.arguments,
             prev_infos,
             return_type: fun.result.as_ref().map(|fr| fr.ty),
         }

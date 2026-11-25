@@ -4118,6 +4118,10 @@ pub enum RayPipelineFunction {
 pub enum RayTracingData {
     Pointer(Handle<Expression>),
     Location(u32),
+    Argument {
+        index: u32,
+        flavor: RayTracingFlavor,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rglo)]
@@ -4240,7 +4244,7 @@ pub struct HitObjectTrace {
     pub direction: Handle<Expression>,
     pub tmax: Handle<Expression>,
     pub time: Option<Handle<Expression>>,
-    pub payload: Handle<Expression>,
+    pub payload: RayTracingData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rglo)]
@@ -4279,7 +4283,7 @@ pub enum HitObjectFunction {
         direction: Handle<Expression>,
         tmax: Handle<Expression>,
         time: Option<Handle<Expression>>,
-        attributes: Handle<Expression>,
+        attributes: RayTracingData,
     },
     RecordMiss {
         flags: Option<Handle<Expression>>,
@@ -4294,18 +4298,18 @@ pub enum HitObjectFunction {
     RecordFromQuery {
         query: Handle<Expression>,
         sbt_record_index: Handle<Expression>,
-        attributes: Handle<Expression>,
+        attributes: RayTracingData,
         hit_kind: Option<Handle<Expression>>,
     },
     ExecuteShader {
-        payload: Handle<Expression>,
+        payload: RayTracingData,
     },
     ReorderExecute {
-        payload: Handle<Expression>,
+        payload: RayTracingData,
         hint: Option<ReorderHint>,
     },
     GetAttributes {
-        attributes: Handle<Expression>,
+        attributes: RayTracingData,
     },
     SetShaderBindingTableRecordIndex {
         index: Handle<Expression>,

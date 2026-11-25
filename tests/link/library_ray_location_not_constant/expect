@@ -1,0 +1,2 @@
+reject
+the ray tracing location passed to `trace` must be a compile-time constant

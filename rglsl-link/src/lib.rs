@@ -11,6 +11,7 @@ mod interface;
 mod layout;
 mod merge;
 mod program;
+mod ray_location;
 pub mod reflect;
 mod stage_io;
 mod unify;
@@ -291,6 +292,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     module.debug_info = debug_info;
     module.span_sources = span_sources;
     fix_up_library_functions(&mut module, &library_functions, stage);
+    ray_location::resolve(&mut module)?;
     Ok(Merged {
         stage,
         module,

@@ -1329,11 +1329,11 @@ impl FunctionInfo {
                 let written = match *fun {
                     crate::HitObjectFunction::TraceRay(ref trace)
                     | crate::HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
-                        Some(trace.payload)
+                        trace.payload.pointer()
                     }
                     crate::HitObjectFunction::ExecuteShader { payload }
-                    | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
-                    crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
+                    | crate::HitObjectFunction::ReorderExecute { payload, .. } => payload.pointer(),
+                    crate::HitObjectFunction::GetAttributes { attributes } => attributes.pointer(),
                     _ => None,
                 };
                 fun.for_each_operand(|operand| {

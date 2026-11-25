@@ -99,6 +99,16 @@ pub enum LinkError {
         name: String,
         at: Option<SourcePosition>,
     },
+    #[error("the ray tracing location passed to `{0}` must be a compile-time constant")]
+    RayLocationNotConstant(String),
+    #[error(
+        "`{function}` needs a {qualifiers} variable with location {location}, but none is declared"
+    )]
+    RayLocationNotDeclared {
+        qualifiers: &'static str,
+        location: u32,
+        function: String,
+    },
     #[error("internal linker error: {0}")]
     Internal(String),
 }

@@ -1,0 +1,2 @@
+reject
+`trace` needs a rayPayloadEXT/rayPayloadInEXT variable with location 3, but none is declared

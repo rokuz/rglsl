@@ -1,0 +1,26 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_shader_invocation_reorder : require
+void traced(hitObjectEXT hit, vec3 origin, const int payload);
+void executed(hitObjectEXT hit, const int payload);
+void attributes(hitObjectEXT hit, const int location);
+layout(location = 1) rayPayloadEXT vec4 color;
+layout(location = 4) rayPayloadEXT float visibility;
+layout(location = 2) hitObjectAttributeEXT vec2 barycentrics;
+layout(set = 0, binding = 1) buffer Result { vec4 values[16]; } result;
+void main() {
+    vec3 origin = vec3(vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy), -1.0);
+    color = vec4(0.25, 0.5, 0.75, 1.0);
+    visibility = 0.125;
+    barycentrics = vec2(0.0);
+    hitObjectEXT hit;
+    traced(hit, origin, 1);
+    float hits = 0.0;
+    if (hitObjectIsHitEXT(hit)) {
+        attributes(hit, 2);
+        hits = 1.0;
+    }
+    executed(hit, 4);
+    uint index = (gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x) % 16u;
+    result.values[index] = vec4(color.x, visibility, hits, barycentrics.x + barycentrics.y);
+}

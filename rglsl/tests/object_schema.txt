@@ -1,4 +1,4 @@
-FORMAT_VERSION 40
+FORMAT_VERSION 41
 AddressSpace fd71764f652ff65a
 AmdBarycentric 74eb27f50e4d760c
 Arena b0a0ae77a55d57a8
@@ -71,9 +71,9 @@ GlobalSymbol 5b7e9608019281c7
 GlobalVariable c850e2a175f94f2c
 Handle b9ff4851906d53fb
 HeapMember 0689579b05e06cc3
-HitObjectFunction 193a1c95200aaff1
+HitObjectFunction c231c4bf06065a99
 HitObjectSbtRecord 7ceb515c912a7d97
-HitObjectTrace 67a851ba0df0a8a5
+HitObjectTrace 378e3e4e90b691e5
 HitObjectValue 0961130f4892086d
 ImageClass c266435ee1445288
 ImageDimension 5c2249f1e5984287
@@ -126,7 +126,7 @@ RayPipelineFunction e6eeab5ffd632865
 RayQueryFunction 31d7ae132adfd0a0
 RayQueryIntersectionValue f64336190a3e2fce
 RayQueryValue a05f6bd5948bd96d
-RayTracingData 02bff1514af07a76
+RayTracingData b92796621fa98915
 RayTracingFeatures 651e258865b09b82
 Reconvergence 64fa7d7f7218352e
 RelationalFunction b938caa21c7dda8b

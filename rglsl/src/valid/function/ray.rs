@@ -171,6 +171,7 @@ impl super::super::Validator {
                 self.validate_ray_data(
                     payload,
                     &[AddressSpace::RayPayload, AddressSpace::IncomingRayPayload],
+                    span,
                     context,
                 )?;
                 Ok(super::super::ShaderStages::RAY_GENERATION
@@ -185,6 +186,7 @@ impl super::super::Validator {
                         AddressSpace::CallableData,
                         AddressSpace::IncomingCallableData,
                     ],
+                    span,
                     context,
                 )?;
                 Ok(super::super::ShaderStages::RAY_GENERATION
@@ -252,10 +254,11 @@ impl super::super::Validator {
         }
     }
 
-    fn validate_hit_object_pointer(
+    fn validate_hit_object_data(
         &self,
-        pointer: Handle<crate::Expression>,
+        data: crate::RayTracingData,
         space: crate::AddressSpace,
+        span: crate::Span,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         use crate::AddressSpace as As;
@@ -263,7 +266,16 @@ impl super::super::Validator {
             As::RayPayload => &[As::RayPayload, As::IncomingRayPayload],
             _ => &[space],
         };
-        self.validate_ray_data(crate::RayTracingData::Pointer(pointer), spaces, context)
+        match data {
+            crate::RayTracingData::Pointer(pointer) => {
+                self.validate_ray_data_pointer(pointer, spaces, context)
+            }
+            crate::RayTracingData::Location(_) => Err(FunctionError::InvalidPayloadType
+                .with_span_static(span, "a hit object needs a variable")),
+            crate::RayTracingData::Argument { index, .. } => {
+                self.validate_ray_data_argument(index, span, context)
+            }
+        }
     }
 
     fn validate_hit_object_function(
@@ -301,9 +313,10 @@ impl super::super::Validator {
             {
                 self.validate_ray_operand(operand, operand_kind, context)?;
             }
-            self.validate_hit_object_pointer(
+            self.validate_hit_object_data(
                 trace.payload,
                 crate::AddressSpace::RayPayload,
+                span,
                 context,
             )
         };
@@ -359,7 +372,7 @@ impl super::super::Validator {
                 if let Some(time) = time {
                     self.validate_ray_operand(time, RayOperand::Float, context)?;
                 }
-                self.validate_hit_object_pointer(pointer, attributes, context)
+                self.validate_hit_object_data(pointer, attributes, span, context)
             }
             Hf::RecordMiss {
                 flags,
@@ -401,26 +414,30 @@ impl super::super::Validator {
                 for operand in core::iter::once(sbt_record_index).chain(hit_kind) {
                     self.validate_ray_operand(operand, RayOperand::Uint, context)?;
                 }
-                self.validate_hit_object_pointer(pointer, attributes, context)
+                self.validate_hit_object_data(pointer, attributes, span, context)
             }
-            Hf::ExecuteShader { payload } => {
-                self.validate_hit_object_pointer(payload, crate::AddressSpace::RayPayload, context)
-            }
+            Hf::ExecuteShader { payload } => self.validate_hit_object_data(
+                payload,
+                crate::AddressSpace::RayPayload,
+                span,
+                context,
+            ),
             Hf::ReorderExecute {
                 payload,
                 hint: reorder,
             } => {
                 ext_only(flavor == Hk::Ext)?;
-                self.validate_hit_object_pointer(
+                self.validate_hit_object_data(
                     payload,
                     crate::AddressSpace::RayPayload,
+                    span,
                     context,
                 )?;
                 hint(reorder)
             }
             Hf::GetAttributes {
                 attributes: pointer,
-            } => self.validate_hit_object_pointer(pointer, attributes, context),
+            } => self.validate_hit_object_data(pointer, attributes, span, context),
             Hf::SetShaderBindingTableRecordIndex { index } => {
                 ext_only(flavor == Hk::Ext)?;
                 self.validate_ray_operand(index, RayOperand::Uint, context)
@@ -429,15 +446,54 @@ impl super::super::Validator {
         }
     }
 
+    fn validate_ray_data_argument(
+        &self,
+        index: u32,
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        if self.mode == crate::valid::ValidationMode::Executable {
+            return Err(FunctionError::UnresolvedRayDataArgument(index)
+                .with_span_static(span, "the location of this call"));
+        }
+        let signed_integer = usize::try_from(index)
+            .ok()
+            .and_then(|index| context.arguments.get(index))
+            .is_some_and(|argument| {
+                context.types[argument.ty].inner == crate::TypeInner::Scalar(crate::Scalar::I32)
+            });
+        if signed_integer {
+            Ok(())
+        } else {
+            Err(FunctionError::InvalidRayDataArgument(index)
+                .with_span_static(span, "the location of this call"))
+        }
+    }
+
     fn validate_ray_data(
         &self,
         data: crate::RayTracingData,
         spaces: &[crate::AddressSpace],
+        span: crate::Span,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
-        let crate::RayTracingData::Pointer(pointer) = data else {
-            return Ok(());
-        };
+        match data {
+            crate::RayTracingData::Pointer(pointer) => {
+                self.validate_ray_data_pointer(pointer, spaces, context)
+            }
+            crate::RayTracingData::Location(_) => Ok(()),
+            crate::RayTracingData::Argument { index, .. } => {
+                self.validate_ray_data_argument(index, span, context)
+            }
+        }
+    }
+
+    fn validate_ray_data_pointer(
+        &self,
+        pointer: Handle<crate::Expression>,
+        spaces: &[crate::AddressSpace],
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
         let crate::TypeInner::Pointer { space, .. } =
             *context.resolve_type_inner(pointer, &self.valid_expression_set)?
         else {

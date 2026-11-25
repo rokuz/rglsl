@@ -3,7 +3,10 @@ use spirv::Op;
 use crate::back::spv::{Block, BlockContext, Error, Instruction, feature};
 
 impl BlockContext<'_> {
-    fn ray_tracing_data_id(&mut self, data: crate::RayTracingData) -> Result<spirv::Word, Error> {
+    pub(super) fn ray_tracing_data_id(
+        &mut self,
+        data: crate::RayTracingData,
+    ) -> Result<spirv::Word, Error> {
         match data {
             crate::RayTracingData::Pointer(pointer) => self.cached.get(pointer),
             crate::RayTracingData::Location(location) => {
@@ -13,6 +16,9 @@ impl BlockContext<'_> {
                     .writer
                     .get_constant_scalar(crate::Literal::I32(location)))
             }
+            crate::RayTracingData::Argument { .. } => Err(Error::Validation(
+                "a ray tracing location that is a function argument was not resolved by the linker",
+            )),
         }
     }
 
@@ -53,8 +59,11 @@ impl BlockContext<'_> {
                         self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                         Op::TraceRayMotionNV
                     }
-                    (None, crate::RayTracingData::Pointer(_)) => Op::TraceRayKHR,
                     (None, crate::RayTracingData::Location(_)) => Op::TraceNV,
+                    (
+                        None,
+                        crate::RayTracingData::Pointer(_) | crate::RayTracingData::Argument { .. },
+                    ) => Op::TraceRayKHR,
                 };
                 block.body.push(Instruction::ray(op, None, &operands));
                 Ok(None)
@@ -62,8 +71,10 @@ impl BlockContext<'_> {
             crate::RayPipelineFunction::ExecuteCallable { sbt_index, data } => {
                 let operands = [self.cached.get(sbt_index)?, self.ray_tracing_data_id(data)?];
                 let op = match data {
-                    crate::RayTracingData::Pointer(_) => Op::ExecuteCallableKHR,
                     crate::RayTracingData::Location(_) => Op::ExecuteCallableNV,
+                    crate::RayTracingData::Pointer(_) | crate::RayTracingData::Argument { .. } => {
+                        Op::ExecuteCallableKHR
+                    }
                 };
                 block.body.push(Instruction::ray(op, None, &operands));
                 Ok(None)

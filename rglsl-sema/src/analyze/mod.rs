@@ -421,6 +421,7 @@ pub(crate) struct Analyzer<'a> {
     pub variable_pointers: bool,
     pub replicated_composites: bool,
     pub ray_locations: [Vec<u32>; 3],
+    pub defines_main: bool,
     pub primitive_culling: bool,
     pub subgroup_uniform_control_flow: bool,
     pub maximally_reconverges: bool,
@@ -503,6 +504,7 @@ impl<'a> Analyzer<'a> {
             variable_pointers: false,
             replicated_composites: false,
             ray_locations: [Vec::new(), Vec::new(), Vec::new()],
+            defines_main: false,
             primitive_culling: false,
             subgroup_uniform_control_flow: false,
             maximally_reconverges: false,
@@ -527,6 +529,13 @@ impl<'a> Analyzer<'a> {
             self.scopes.reserve(estimated / 8);
         }
         self.patch_vertices_limit();
+        self.defines_main = unit.external_declarations.iter().any(|declaration| {
+            matches!(
+                declaration,
+                ExternalDeclaration::FunctionDefinition(definition)
+                    if definition.kind.prototype.node.name.node == "main"
+            )
+        });
         for declaration in &unit.external_declarations {
             match declaration {
                 ExternalDeclaration::Directive(directive) => match &directive.node.kind {

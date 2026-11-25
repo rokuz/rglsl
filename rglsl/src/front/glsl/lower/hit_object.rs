@@ -94,11 +94,8 @@ impl FunctionLowerer<'_, '_> {
         expression: &AstExpression,
         set: usize,
         at: Span,
-    ) -> Result<Handle<Expression>> {
-        match self.ray_data(expression, set, false, at)? {
-            crate::RayTracingData::Pointer(pointer) => Ok(pointer),
-            crate::RayTracingData::Location(_) => Err(internal(at)),
-        }
+    ) -> Result<crate::RayTracingData> {
+        self.ray_data(expression, set, false, at)
     }
 
     fn hit_object_trace(
