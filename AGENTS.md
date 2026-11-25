@@ -240,7 +240,9 @@ To cut a release:
 
 1. Set `version` in `[workspace.package]` and in `[workspace.dependencies]` of `Cargo.toml`,
    update `Cargo.lock` (`cargo check`), the version in the README snippets and in
-   `find_package` of `samples/c/CMakeLists.txt`; commit on `main`.
+   `find_package` of `samples/c/CMakeLists.txt`; rewrite `.github/changes.md` with the changes
+   since the previous release (the release workflow puts it in place of `@CHANGES@` in
+   `.github/release-notes.md`); commit on `main`.
 2. Run the release workflow with `workflow_dispatch` on that commit and check its artifact;
    `cargo publish --workspace --dry-run` checks the crates locally.
 3. `git tag vX.Y.Z && git push origin vX.Y.Z`; review the draft release.

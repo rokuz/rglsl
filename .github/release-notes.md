@@ -2,6 +2,8 @@ rglsl @VERSION@: a Vulkan GLSL (`#version 450`/`460`) to SPIR-V compiler in safe
 replacement for `glslangValidator` in Vulkan projects, with its own optimizer (`-O`, `-Os`), a
 linker of object modules, reflection of the SPIR-V it produces, a Rust API and a C API.
 
+@CHANGES@
+
 ## Files
 
 | File | What |
