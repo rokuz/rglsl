@@ -1111,3 +1111,36 @@ fn g_n_records_only_the_source_file_name() -> TestResult {
     assert!(!run.stdout.contains("ModuleProcessed"), "{}", run.stdout);
     Ok(())
 }
+
+#[test]
+fn unused_library_globals_are_dropped_unless_kept() -> TestResult {
+    let directory = work_dir("library_globals")?;
+    fs::write(
+        directory.join("main.frag"),
+        "#version 450\nfloat shade();\nlayout(location = 0) out vec4 color;\nvoid main() { color = vec4(1.0); }\n",
+    )?;
+    fs::write(
+        directory.join("shading.lib.glsl"),
+        "#version 450\nlayout(binding = 7) uniform sampler2D unused_image;\nfloat shade() { return 1.0; }\nvec4 sample_image() { return texture(unused_image, vec2(0.5)); }\n",
+    )?;
+    let pruned = rglsl(
+        &directory,
+        &["-V", "-l", "--spirv-dis", "main.frag", "shading.lib.glsl"],
+    )?;
+    assert_eq!(pruned.code, Some(0), "{}", pruned.stderr);
+    assert!(!pruned.stdout.contains("unused_image"), "{}", pruned.stdout);
+    let kept = rglsl(
+        &directory,
+        &[
+            "--keep-library-globals",
+            "-V",
+            "-l",
+            "--spirv-dis",
+            "main.frag",
+            "shading.lib.glsl",
+        ],
+    )?;
+    assert_eq!(kept.code, Some(0), "{}", kept.stderr);
+    assert!(kept.stdout.contains("unused_image"), "{}", kept.stdout);
+    Ok(())
+}

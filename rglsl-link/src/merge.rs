@@ -545,6 +545,13 @@ impl Builder {
     }
 }
 
+const fn is_resource(space: AddressSpace) -> bool {
+    matches!(
+        space,
+        AddressSpace::Handle | AddressSpace::Uniform | AddressSpace::Storage { .. }
+    )
+}
+
 pub(crate) fn unused_on_use_globals(
     objects: &[ObjectModule],
     order: &[Node],
@@ -562,7 +569,13 @@ pub(crate) fn unused_on_use_globals(
                 .globals
                 .iter()
                 .filter(|symbol| {
-                    symbol.on_use || (all_optional && symbol.kind != SymbolKind::BuiltIn)
+                    symbol.on_use
+                        || (all_optional
+                            && symbol.kind != SymbolKind::BuiltIn
+                            && module
+                                .global_variables
+                                .try_get(symbol.global)
+                                .is_ok_and(|global| is_resource(global.space)))
                 })
                 .map(|symbol| symbol.global)
                 .collect();

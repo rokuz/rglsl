@@ -526,6 +526,17 @@ pub unsafe extern "C" fn rglsl_program_options_set_validate_io(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_keep_library_globals(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| {
+        options.prune_library_globals = !enabled;
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_program_options_set_optimization(
     options: *mut ProgramOptions,
     level: OptLevel,

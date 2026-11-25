@@ -112,6 +112,11 @@ Options:
                                      * spirv1.5  under --target-env vulkan1.2
                                      * spirv1.6  under --target-env vulkan1.3
                                      * spirv1.6  under --target-env vulkan1.4
+  --keep-library-globals            keeps the global variables of linked
+                                    libraries that no reachable function uses,
+                                    and the opacity micromap mode of an entry
+                                    point that makes no ray query, as glslang
+                                    does; they are dropped by default
   --validate-io                     validate cross stage IO: an input a stage
                                     reads needs an output of the stage before
   --variable-name <name> | --vn <name>

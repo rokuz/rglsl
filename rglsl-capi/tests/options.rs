@@ -656,3 +656,22 @@ void main() {
     );
     Ok(())
 }
+
+#[test]
+fn keep_library_globals_is_a_program_option() -> TestResult {
+    let program_options = program_options()?;
+    for enabled in [true, false] {
+        let code = unsafe {
+            rglsl_c::rglsl_program_options_set_keep_library_globals(
+                program_options.pointer,
+                enabled,
+            )
+        };
+        assert_eq!(code, RGLSL_RESULT_OK);
+    }
+    let code = unsafe {
+        rglsl_c::rglsl_program_options_set_keep_library_globals(core::ptr::null_mut(), true)
+    };
+    assert_ne!(code, RGLSL_RESULT_OK);
+    Ok(())
+}

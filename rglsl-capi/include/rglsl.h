@@ -338,6 +338,9 @@ rglsl_result rglsl_compile_options_set_discard_is_terminate(rglsl_compile_option
 
 rglsl_result rglsl_program_options_set_validate_io(rglsl_program_options *options, bool enabled);
 
+rglsl_result rglsl_program_options_set_keep_library_globals(rglsl_program_options *options,
+                                                            bool enabled);
+
 rglsl_result rglsl_program_options_set_optimization(rglsl_program_options *options,
                                                     rglsl_opt_level level);
 

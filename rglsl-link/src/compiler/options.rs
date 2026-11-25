@@ -228,7 +228,7 @@ impl Default for ProgramOptions {
             limits: ResourceLimits::default(),
             validate_io: false,
             reflection: None,
-            prune_library_globals: false,
+            prune_library_globals: true,
             optimize: OptOptions::default(),
         }
     }

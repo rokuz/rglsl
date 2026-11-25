@@ -998,12 +998,41 @@ fn listing(directory: &Path) -> Result<BTreeSet<String>> {
     Ok(names)
 }
 
+pub const KEEP_LIBRARY_GLOBALS: &str = "--keep-library-globals";
+
+const SHADER_EXTENSIONS: [&str; 16] = [
+    ".vert", ".tesc", ".tese", ".geom", ".frag", ".comp", ".mesh", ".task", ".rgen", ".rint",
+    ".rahit", ".rchit", ".rmiss", ".rcall", ".glsl", ".rglo",
+];
+
+pub fn links_several_units(args: &[&str]) -> bool {
+    let shaders = args
+        .iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .filter(|arg| {
+            SHADER_EXTENSIONS
+                .iter()
+                .any(|extension| arg.ends_with(extension))
+        })
+        .count();
+    args.contains(&"-l") || shaders > 1
+}
+
+fn comparison_args<'a>(args: &'a [&'a str]) -> &'a [&'a str] {
+    if links_several_units(args) {
+        &[KEEP_LIBRARY_GLOBALS]
+    } else {
+        &[]
+    }
+}
+
 fn run_tool(
     tool: &Path,
     case: &Case,
     test_dir: &Path,
     work: &Path,
     timeout: Duration,
+    extra: &[&str],
 ) -> Result<Run> {
     if work.exists() {
         fs::remove_dir_all(work)?;
@@ -1018,7 +1047,7 @@ fn run_tool(
     }
     let before = listing(work)?;
     let mut command = Command::new(tool);
-    command.current_dir(work).args(&case.args);
+    command.current_dir(work).args(extra).args(&case.args);
     let input = match case.stdin {
         Some(file) => Some(fs::read(test_dir.join(file))?),
         None => None,
@@ -1334,6 +1363,7 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
         &env.test_dir,
         &directory.join("glslang"),
         env.timeout,
+        &[],
     )?;
     let ours = run_tool(
         &env.rglsl,
@@ -1341,6 +1371,7 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
         &env.test_dir,
         &directory.join("rglsl"),
         env.timeout,
+        comparison_args(&case.args),
     )?;
     let (Some(reference_code), Some(our_code)) = (exit_code(&glslang.exit), exit_code(&ours.exit))
     else {

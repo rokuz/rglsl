@@ -317,7 +317,10 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     if rejected {
         return EXIT_REJECTED;
     }
-    let link_options = rglsl_link::Options::default();
+    let link_options = rglsl_link::Options {
+        prune_library_globals: false,
+        ..rglsl_link::Options::default()
+    };
     let mut linked = match rglsl_link::link_program(
         rglsl_link::group_objects_by_stage(objects),
         &link_options,

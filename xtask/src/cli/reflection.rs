@@ -216,10 +216,12 @@ fn sweep_one(
         }
         fs::create_dir_all(&directory)?;
         let mut command = Command::new(tool);
-        command
-            .current_dir(&directory)
-            .args(target_args)
-            .args(&args);
+        command.current_dir(&directory).args(target_args);
+        let words: Vec<&str> = args.iter().map(String::as_str).collect();
+        if side == "rglsl" && super::links_several_units(&words) {
+            command.arg(super::KEEP_LIBRARY_GLOBALS);
+        }
+        command.args(&args);
         outputs.push(process::run(command, env.timeout)?);
     }
     let (Some(glslang), Some(ours)) = (outputs.first(), outputs.get(1)) else {

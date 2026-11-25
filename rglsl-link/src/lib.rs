@@ -52,11 +52,21 @@ pub use rglsl_sema::{Configuration, ResourceLimits};
 use calls::SymbolTable;
 use merge::{Builder, MergedGlobal};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
     pub limits: rglsl_sema::ResourceLimits,
     pub validate_io: bool,
     pub prune_library_globals: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            limits: rglsl_sema::ResourceLimits::default(),
+            validate_io: false,
+            prune_library_globals: true,
+        }
+    }
 }
 
 #[derive(Debug)]

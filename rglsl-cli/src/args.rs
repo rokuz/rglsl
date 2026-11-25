@@ -34,6 +34,7 @@ pub struct Options {
     pub discard_is_terminate: bool,
     pub enhanced_messages: bool,
     pub validate_io: bool,
+    pub keep_library_globals: bool,
     pub quiet: bool,
     pub suppress_info: bool,
     pub suppress_warnings: bool,
@@ -235,6 +236,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
         "validate-io" => options.validate_io = true,
+        "keep-library-globals" => options.keep_library_globals = true,
         "spirv-reflection-json" => match cursor.take_next() {
             Some(name) => options.spirv_reflection_json = Some(name),
             None => return Err(Exit::detailed("no <file> provided", word)),
